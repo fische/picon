@@ -4,12 +4,12 @@
 name:                picon
 version:             0.1.0.0
 synopsis:            A Python-to-Cython tool
--- description:         
+-- description:
 license:             BSD3
 license-file:        LICENSE
 author:              Maxime Fischer
 maintainer:          maxime2fischer@gmail.com
--- copyright:           
+-- copyright:
 category:            Language
 build-type:          Simple
 extra-source-files:  ChangeLog.md
@@ -17,8 +17,11 @@ cabal-version:       >=1.10
 
 executable picon
   main-is:             Main.hs
-  -- other-modules:       
-  -- other-extensions:    
-  build-depends:       base >=4.9 && <4.10
+  -- other-modules:
+  -- other-extensions:
+  build-depends:
+    base >=4.9 && <4.10,
+    language-python == 0.5.4
   hs-source-dirs:      src
   default-language:    Haskell2010
+  ghc-options:         -Wcompat -Wall -O
