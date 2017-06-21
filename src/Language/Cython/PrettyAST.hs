@@ -8,8 +8,10 @@ import Language.Python.Common.Pretty
 import qualified Language.Python.Common.AST as PAST
 import qualified Language.Cython.AST as CAST
 
-instance {-# OVERLAPS #-} (Span s) => Pretty (PAST.Expr (CAST.Annotation, s)) where
-  pretty (PAST.Var { PAST.var_ident = i, PAST.expr_annot = (CAST.Expr ctype, _) }) = text "cdef " <+> pretty ctype <+> text " " <+> pretty i
+instance {-# OVERLAPS #-} (Span s) => Pretty (PAST.Statement (CAST.Annotation, s)) where
+  pretty (PAST.Assign { PAST.assign_to = [to], PAST.assign_expr = expr, PAST.stmt_annot = (CAST.Assign{ CAST.cdef = cdef, CAST.ctype = ctype }, _)})
+    | cdef = text "cdef " <+> pretty ctype <+> pretty to <+> text " = "  <+> pretty expr
+    | otherwise = pretty to <+> text " = " <+> pretty expr
 
 instance Pretty (CAST.CBasicType) where
   pretty CAST.Char = text "char"

@@ -14,6 +14,10 @@ data CythonType = CType CType | PythonObject
   deriving (Eq,Ord,Show,Typeable,Data)
 
 data Annotation =
+  Assign {
+    cdef :: Bool,
+    ctype :: CythonType
+  } |
   Expr {
     ctype :: CythonType
   } |
@@ -35,8 +39,8 @@ cythonizeStatement :: (Span s) => AST.Statement s
   -> AST.Statement (Annotation, s)
 cythonizeStatement (AST.Assign [to] expr annot) =
   let cexpr = cythonizeExpr expr
-      cto = fmap (\s -> (Expr $ getExprType cexpr, s)) to
-      cannot = Empty
+      cto = cythonizeExpr to
+      cannot = Assign { cdef = True, ctype = (getExprType cexpr) }
   in AST.Assign [cto] cexpr (cannot, annot)
 cythonizeStatement st = fmap (\annot -> (Empty, annot)) st
 
