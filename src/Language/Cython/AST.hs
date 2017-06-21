@@ -6,11 +6,16 @@ import qualified Language.Python.Common.AST as AST
 import Language.Python.Common.SrcLocation (Span)
 import Data.Data
 
-data CType = Int | Float | PythonObject deriving (Eq,Ord,Show,Typeable,Data)
+data CBasicType = Char | Short | Int | Long | LongLong | Float | Double
+  deriving (Eq,Ord,Show,Typeable,Data)
+data CType = BInt | Unsigned CBasicType | Signed CBasicType | Ptr CType
+  deriving (Eq,Ord,Show,Typeable,Data)
+data CythonType = CType CType | PythonObject
+  deriving (Eq,Ord,Show,Typeable,Data)
+
 data Annotation =
-  Assign {
-    cdef :: Bool,
-    ctype :: CType
+  Expr {
+    ctype :: CythonType
   } |
   Empty
   deriving (Eq,Ord,Show,Typeable,Data)
@@ -29,14 +34,26 @@ cythonizeStatements (hd:tl) =
 cythonizeStatement :: (Span s) => AST.Statement s
   -> AST.Statement (Annotation, s)
 cythonizeStatement (AST.Assign [to] expr annot) =
-  let cannot = Assign { cdef = True, ctype = (getExprType expr) }
-  in AST.Assign [cythonizeExpr to] (cythonizeExpr expr) (cannot, annot)
+  let cexpr = cythonizeExpr expr
+      cto = fmap (\s -> (Expr $ getExprType cexpr, s)) to
+      cannot = Empty
+  in AST.Assign [cto] cexpr (cannot, annot)
 cythonizeStatement st = fmap (\annot -> (Empty, annot)) st
 
+-- TODO Handle complex numbers
 cythonizeExpr :: (Span s) => AST.Expr s -> AST.Expr (Annotation, s)
-cythonizeExpr = fmap (\annot -> (Empty, annot))
+cythonizeExpr (AST.Int val lit annot) =
+  AST.Int val lit (Expr . CType $ Signed Int, annot)
+cythonizeExpr (AST.LongInt val lit annot) =
+  AST.LongInt val lit (Expr . CType $ Signed Long, annot)
+cythonizeExpr (AST.Float val lit annot) =
+  AST.Float val lit (Expr . CType $ Signed Double, annot)
+cythonizeExpr (AST.Bool val annot) =
+  AST.Bool val (Expr $ CType BInt, annot)
+cythonizeExpr e = fmap (\annot -> (Expr PythonObject, annot)) e
 
-getExprType :: AST.Expr s -> CType
-getExprType (AST.Int _ _ _) = Int
-getExprType (AST.Float _ _ _) = Float
-getExprType _ = PythonObject
+getExprType :: (Span s) => AST.Expr (Annotation, s) -> CythonType
+getExprType expr
+  | cannot /= Empty = ctype cannot
+  | otherwise = PythonObject
+  where (cannot, _) = AST.expr_annot expr
