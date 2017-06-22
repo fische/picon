@@ -15,4 +15,4 @@ main = do
   code <- readFile file
   case Python2.parseModule code file of
        Left err -> putStrLn $ Pretty.prettyText err
-       Right (pymodule, _) -> putStrLn . Pretty.prettyText $ AST.cythonizeModule pymodule
+       Right (pymodule, _) -> putStrLn . Pretty.prettyText $ AST.cythonize pymodule

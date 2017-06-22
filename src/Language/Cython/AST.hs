@@ -1,4 +1,4 @@
-{-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE DeriveDataTypeable, TypeSynonymInstances #-}
 
 module Language.Cython.AST where
 
@@ -24,37 +24,39 @@ data Annotation =
   Empty
   deriving (Eq,Ord,Show,Typeable,Data)
 
-cythonizeModule :: (Span s) => AST.Module s -> AST.Module (Annotation, s)
-cythonizeModule (AST.Module stmts) =
-  AST.Module (cythonizeStatements stmts)
+class Cythonizable t where
+  cythonize :: (Span annot) => t annot -> t (Annotation, annot)
 
-cythonizeStatements :: (Span s) => [AST.Statement s]
+instance Cythonizable AST.Module where
+  cythonize (AST.Module stmts) =
+    AST.Module (cythonizeSuite stmts)
+
+cythonizeSuite :: (Span s) => [AST.Statement s]
   -> [AST.Statement (Annotation, s)]
-cythonizeStatements [] = []
-cythonizeStatements (hd:tl) =
-  (cythonizeStatement hd) : (cythonizeStatements tl)
+cythonizeSuite [] = []
+cythonizeSuite (hd:tl) =
+  (cythonize hd) : (cythonizeSuite tl)
 
--- TODO Handle mutliple vars
-cythonizeStatement :: (Span s) => AST.Statement s
-  -> AST.Statement (Annotation, s)
-cythonizeStatement (AST.Assign [to] expr annot) =
-  let cexpr = cythonizeExpr expr
-      cto = cythonizeExpr to
-      cannot = Assign { cdef = True, ctype = (getExprType cexpr) }
-  in AST.Assign [cto] cexpr (cannot, annot)
-cythonizeStatement st = fmap (\annot -> (Empty, annot)) st
+  -- TODO Handle mutliple vars
+instance Cythonizable AST.Statement where
+  cythonize (AST.Assign [to] expr annot) =
+    let cexpr = cythonize expr
+        cto = cythonize to
+        cannot = Assign { cdef = True, ctype = (getExprType cexpr) }
+    in AST.Assign [cto] cexpr (cannot, annot)
+  cythonize st = fmap (\annot -> (Empty, annot)) st
 
--- TODO Handle complex numbers
-cythonizeExpr :: (Span s) => AST.Expr s -> AST.Expr (Annotation, s)
-cythonizeExpr (AST.Int val lit annot) =
-  AST.Int val lit (Expr . CType $ Signed Int, annot)
-cythonizeExpr (AST.LongInt val lit annot) =
-  AST.LongInt val lit (Expr . CType $ Signed Long, annot)
-cythonizeExpr (AST.Float val lit annot) =
-  AST.Float val lit (Expr . CType $ Signed Double, annot)
-cythonizeExpr (AST.Bool val annot) =
-  AST.Bool val (Expr $ CType BInt, annot)
-cythonizeExpr e = fmap (\annot -> (Expr PythonObject, annot)) e
+  -- TODO Handle complex numbers
+instance Cythonizable AST.Expr where
+  cythonize (AST.Int val lit annot) =
+    AST.Int val lit (Expr . CType $ Signed Int, annot)
+  cythonize (AST.LongInt val lit annot) =
+    AST.LongInt val lit (Expr . CType $ Signed Long, annot)
+  cythonize (AST.Float val lit annot) =
+    AST.Float val lit (Expr . CType $ Signed Double, annot)
+  cythonize (AST.Bool val annot) =
+    AST.Bool val (Expr $ CType BInt, annot)
+  cythonize e = fmap (\annot -> (Expr PythonObject, annot)) e
 
 getExprType :: (Span s) => AST.Expr (Annotation, s) -> CythonType
 getExprType expr
