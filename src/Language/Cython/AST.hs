@@ -37,9 +37,7 @@ instance Cythonizable AST.Module where
     AST.Module (cythonizeArray stmts)
 
 cythonizeArray :: (Cythonizable c) => [c s] -> [c (Annotation, s)]
-cythonizeArray [] = []
-cythonizeArray (hd:tl) =
-  (cythonize hd) : (cythonizeArray tl)
+cythonizeArray = fmap cythonize
 
 instance Cythonizable AST.ImportItem where
   cythonize (AST.ImportItem item as annot) =
