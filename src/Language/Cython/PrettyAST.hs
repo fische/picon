@@ -29,5 +29,6 @@ instance Pretty (CAST.CType) where
   pretty (CAST.Ptr t) = pretty t <+> text "*"
 
 instance Pretty (CAST.CythonType) where
+  pretty CAST.Unknown = text "object"
   pretty (CAST.CType t) = pretty t
   pretty CAST.PythonObject = text "object"

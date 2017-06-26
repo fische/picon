@@ -3,13 +3,16 @@
 module Language.Cython.AST where
 
 import qualified Language.Python.Common.AST as AST
+import Data.Map.Strict
 import Data.Data
 
 data CBasicType = Char | Short | Int | Long | LongLong | Float | Double
   deriving (Eq,Ord,Show,Typeable,Data)
+
 data CType = BInt | Unsigned CBasicType | Signed CBasicType | Ptr CType
   deriving (Eq,Ord,Show,Typeable,Data)
-data CythonType = CType CType | PythonObject
+
+data CythonType = Unknown | CType CType | PythonObject
   deriving (Eq,Ord,Show,Typeable,Data)
 
 data Annotation =
@@ -22,6 +25,20 @@ data Annotation =
   } |
   Empty
   deriving (Eq,Ord,Show,Typeable,Data)
+
+data Scope =
+  Scope {
+    global :: Map String CythonType,
+    local :: Map String CythonType
+  }
+
+newLocalScope :: Scope -> Scope
+newLocalScope scope =
+  let glob = union (local scope) (global scope)
+  in Scope{ global = glob, local = empty }
+
+newScope :: Scope
+newScope = Scope{ global = empty, local = empty }
 
 class Cythonizable t where
   cythonize :: t annot -> t (Annotation, annot)
