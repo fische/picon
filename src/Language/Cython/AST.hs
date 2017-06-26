@@ -9,7 +9,7 @@ import Data.Data
 data CBasicType = Char | Short | Int | Long | LongLong | Float | Double
   deriving (Eq,Ord,Show,Typeable,Data)
 
-data CType = BInt | Unsigned CBasicType | Signed CBasicType | Ptr CType
+data CType = Void | BInt | Unsigned CBasicType | Signed CBasicType | Ptr CType
   deriving (Eq,Ord,Show,Typeable,Data)
 
 data CythonType = Unknown | CType CType | PythonObject

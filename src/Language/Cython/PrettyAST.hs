@@ -23,6 +23,7 @@ instance Pretty (CAST.CBasicType) where
   pretty CAST.Double = text "double"
 
 instance Pretty (CAST.CType) where
+  pretty CAST.Void = text "void"
   pretty CAST.BInt = text "bint"
   pretty (CAST.Signed t) = pretty t
   pretty (CAST.Unsigned t) = text "unsigned " <+> pretty t
