@@ -3,7 +3,8 @@
 module Language.Cython.AST where
 
 import qualified Language.Python.Common.AST as AST
-import Data.Map.Strict
+import qualified Data.Map.Strict as Map
+import Data.Maybe (isJust)
 import Data.Data
 
 data CBasicType = Char | Short | Int | Long | LongLong | Float | Double
@@ -28,17 +29,26 @@ data Annotation =
 
 data Scope =
   Scope {
-    global :: Map String CythonType,
-    local :: Map String CythonType
+    global :: Map.Map String CythonType,
+    local :: Map.Map String CythonType
   }
 
 newLocalScope :: Scope -> Scope
 newLocalScope scope =
-  let glob = union (local scope) (global scope)
-  in Scope{ global = glob, local = empty }
+  let glob = Map.union (local scope) (global scope)
+  in Scope{ global = glob, local = Map.empty }
 
 newScope :: Scope
-newScope = Scope{ global = empty, local = empty }
+newScope = Scope{ global = Map.empty, local = Map.empty }
+
+lookup :: Scope -> String -> Maybe CythonType
+lookup scope ident
+  | isJust value = value
+  | otherwise = Map.lookup ident (global scope)
+  where value = Map.lookup ident (local scope)
+
+(!?) :: Scope -> String -> Maybe CythonType
+scope !? ident = Language.Cython.AST.lookup scope ident
 
 class Cythonizable t where
   cythonize :: t annot -> t (Annotation, annot)
