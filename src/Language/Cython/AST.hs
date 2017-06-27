@@ -1,4 +1,4 @@
-{-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE DeriveDataTypeable, DefaultSignatures #-}
 
 module Language.Cython.AST where
 
@@ -52,19 +52,19 @@ scope !? ident = Language.Cython.AST.lookup scope ident
 
 class Cythonizable t where
   cythonize :: t annot -> t (Annotation, annot)
+  default cythonize :: (Functor t) => t annot -> t (Annotation, annot)
+  cythonize = fmap (\annot -> (Empty, annot))
 
-instance Cythonizable AST.Ident where
-  cythonize (AST.Ident str annot)=
-    AST.Ident str (Empty, annot)
+instance Cythonizable AST.Ident
+instance Cythonizable AST.Op
+instance Cythonizable AST.AssignOp
 
 instance Cythonizable AST.Module where
   cythonize (AST.Module stmts) =
     AST.Module (cythonizeArray stmts)
 
 cythonizeArray :: (Cythonizable c) => [c s] -> [c (Annotation, s)]
-cythonizeArray [] = []
-cythonizeArray (hd:tl) =
-  (cythonize hd) : (cythonizeArray tl)
+cythonizeArray = fmap cythonize
 
 instance Cythonizable AST.ImportItem where
   cythonize (AST.ImportItem item as annot) =
@@ -406,85 +406,3 @@ instance Cythonizable AST.Slice where
     AST.SliceExpr (cythonize expr) (Empty, annot)
   cythonize (AST.SliceEllipsis annot) =
     AST.SliceEllipsis (Empty, annot)
-
-instance Cythonizable AST.Op where
-  cythonize (AST.And annot) =
-    AST.And (Empty, annot)
-  cythonize (AST.Or annot) =
-    AST.Or (Empty, annot)
-  cythonize (AST.Not annot) =
-    AST.Not (Empty, annot)
-  cythonize (AST.Exponent annot) =
-    AST.Exponent (Empty, annot)
-  cythonize (AST.LessThan annot) =
-    AST.LessThan (Empty, annot)
-  cythonize (AST.GreaterThan annot) =
-    AST.GreaterThan (Empty, annot)
-  cythonize (AST.Equality annot) =
-    AST.Equality (Empty, annot)
-  cythonize (AST.GreaterThanEquals annot) =
-    AST.GreaterThanEquals (Empty, annot)
-  cythonize (AST.LessThanEquals annot) =
-    AST.LessThanEquals (Empty, annot)
-  cythonize (AST.NotEquals annot) =
-    AST.NotEquals (Empty, annot)
-  cythonize (AST.NotEqualsV2 annot) =
-    AST.NotEqualsV2 (Empty, annot)
-  cythonize (AST.In annot) =
-    AST.In (Empty, annot)
-  cythonize (AST.Is annot) =
-    AST.Is (Empty, annot)
-  cythonize (AST.IsNot annot) =
-    AST.IsNot (Empty, annot)
-  cythonize (AST.NotIn annot) =
-    AST.NotIn (Empty, annot)
-  cythonize (AST.BinaryOr annot) =
-    AST.BinaryOr (Empty, annot)
-  cythonize (AST.Xor annot) =
-    AST.Xor (Empty, annot)
-  cythonize (AST.BinaryAnd annot) =
-    AST.BinaryAnd (Empty, annot)
-  cythonize (AST.ShiftLeft annot) =
-    AST.ShiftLeft (Empty, annot)
-  cythonize (AST.ShiftRight annot) =
-    AST.ShiftRight (Empty, annot)
-  cythonize (AST.Multiply annot) =
-    AST.Multiply (Empty, annot)
-  cythonize (AST.Plus annot) =
-    AST.Plus (Empty, annot)
-  cythonize (AST.Minus annot) =
-    AST.Minus (Empty, annot)
-  cythonize (AST.Divide annot) =
-    AST.Divide (Empty, annot)
-  cythonize (AST.FloorDivide annot) =
-    AST.FloorDivide (Empty, annot)
-  cythonize (AST.Invert annot) =
-    AST.Invert (Empty, annot)
-  cythonize (AST.Modulo annot) =
-    AST.Modulo (Empty, annot)
-
-instance Cythonizable AST.AssignOp where
-  cythonize (AST.PlusAssign annot) =
-    AST.PlusAssign (Empty, annot)
-  cythonize (AST.MinusAssign annot) =
-    AST.MinusAssign (Empty, annot)
-  cythonize (AST.MultAssign annot) =
-    AST.MultAssign (Empty, annot)
-  cythonize (AST.DivAssign annot) =
-    AST.DivAssign (Empty, annot)
-  cythonize (AST.ModAssign annot) =
-    AST.ModAssign (Empty, annot)
-  cythonize (AST.PowAssign annot) =
-    AST.PowAssign (Empty, annot)
-  cythonize (AST.BinAndAssign annot) =
-    AST.BinAndAssign (Empty, annot)
-  cythonize (AST.BinOrAssign annot) =
-    AST.BinOrAssign (Empty, annot)
-  cythonize (AST.BinXorAssign annot) =
-    AST.BinXorAssign (Empty, annot)
-  cythonize (AST.LeftShiftAssign annot) =
-    AST.LeftShiftAssign (Empty, annot)
-  cythonize (AST.RightShiftAssign annot) =
-    AST.RightShiftAssign (Empty, annot)
-  cythonize (AST.FloorDivAssign annot) =
-    AST.FloorDivAssign (Empty, annot)
