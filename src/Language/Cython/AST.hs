@@ -4,7 +4,6 @@ module Language.Cython.AST where
 
 import qualified Language.Python.Common.AST as AST
 import qualified Data.Map.Strict as Map
-import Data.Maybe (isJust)
 import Data.Data
 
 data CBasicType = Char | Short | Int | Long | LongLong | Float | Double
@@ -27,28 +26,13 @@ data Annotation =
   Empty
   deriving (Eq,Ord,Show,Typeable,Data)
 
-data Scope =
-  Scope {
-    global :: Map.Map String CythonType,
-    local :: Map.Map String CythonType
+data Context =
+  Context {
+    scope :: Map.Map String CythonType
   }
 
-newLocalScope :: Scope -> Scope
-newLocalScope scope =
-  let glob = Map.union (local scope) (global scope)
-  in Scope{ global = glob, local = Map.empty }
-
-newScope :: Scope
-newScope = Scope{ global = Map.empty, local = Map.empty }
-
-lookup :: Scope -> String -> Maybe CythonType
-lookup scope ident
-  | isJust value = value
-  | otherwise = Map.lookup ident (global scope)
-  where value = Map.lookup ident (local scope)
-
-(!?) :: Scope -> String -> Maybe CythonType
-scope !? ident = Language.Cython.AST.lookup scope ident
+emptyContext :: Context
+emptyContext = Context { scope = Map.empty }
 
 class Cythonizable t where
   cythonize :: t annot -> t (Annotation, annot)
@@ -143,7 +127,7 @@ instance Cythonizable AST.Statement where
     let cguards = cythonizeGuards guards
         celse = cythonizeArray e
     in AST.Conditional cguards celse (Empty, annot)
-  cythonize (AST.Assign [to] expr annot) =
+  cythonize (AST.Assign [to@AST.Var{}] expr annot) =
     let cexpr = cythonize expr
         cto = cythonize to
         cannot = Assign { cdef = True, ctype = (getExprType cexpr) }
