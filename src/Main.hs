@@ -15,4 +15,7 @@ main = do
   code <- readFile file
   case Python2.parseModule code file of
        Left err -> putStrLn $ prettyText err
-       Right (pymodule, _) -> putStrLn . prettyText $ AST.cythonize pymodule
+       Right (pymodule, _) ->
+        let tree = AST.initCythonAST pymodule
+            ctx = AST.emptyContext
+        in putStrLn . prettyText . snd $ AST.cythonize ctx tree
