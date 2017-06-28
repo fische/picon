@@ -4,6 +4,7 @@ module Language.Cython.AST where
 
 import qualified Language.Python.Common.AST as AST
 import qualified Data.Map.Strict as Map
+import Data.Maybe (isNothing)
 import Data.Data
 
 data CBasicType = Char | Short | Int | Long | LongLong | Float | Double
@@ -33,6 +34,27 @@ getAnnotationType cannot
 
 initCythonAST :: (Functor f) => f annot -> f (Annotation, annot)
 initCythonAST = fmap (\s -> (Empty, s))
+
+data Context =
+  Context {
+    scope :: Map.Map String CythonType
+  }
+  deriving (Eq,Ord,Show,Typeable,Data)
+
+emptyContext :: Context
+emptyContext = Context { scope = Map.empty }
+
+replaceIdent :: Context -> String -> CythonType -> Context
+replaceIdent ctx ident typ =
+  ctx { scope = Map.insert ident typ (scope ctx) }
+
+-- TODO Compare CTypes, change if needed and return it
+assignIdent :: Context -> String -> CythonType
+  -> (Context, Bool, CythonType)
+assignIdent ctx ident typ =
+  let (old, newscope) =
+        Map.insertLookupWithKey (\_ _ new -> new) ident typ (scope ctx)
+  in (ctx { scope = newscope }, isNothing old, typ)
 
 class Cythonizable t where
   cythonize :: Context -> t (Annotation, annot)
@@ -149,10 +171,11 @@ instance Cythonizable AST.Statement where
     in (ctx, AST.Conditional cguards celse annot)
   cythonize ctx (AST.Assign [to@AST.Var{}] expr (_, annot)) =
     let (_, cexpr) = cythonize ctx expr
-        exprt = getAnnotationType . fst $ AST.annot cexpr
-        cto = fmap (\(_, s) -> (Expr{ ctype = exprt }, s)) to
-        cannot = Assign { cdef = True, ctype = exprt }
-        rctx = replaceIdent ctx (AST.var_ident cto)
+        ident = AST.ident_string $ AST.var_ident cto
+        typ = getAnnotationType . fst $ AST.annot cexpr
+        (rctx, rdef, rtyp) = assignIdent ctx ident typ
+        cto = fmap (\(_, s) -> (Expr{ ctype = rtyp }, s)) to
+        cannot = Assign { cdef = rdef, ctype = rtyp }
     in (rctx, AST.Assign [cto] cexpr (cannot, annot))
   cythonize ctx (AST.Assign tos expr annot) =
     let (_, cexpr) = cythonize ctx expr
@@ -209,23 +232,34 @@ instance Cythonizable AST.Statement where
     in (ctx, AST.Print chevron cexprs comma annot)
   cythonize ctx (AST.Exec expr globs annot) =
     let (_, cexpr) = cythonize ctx expr
-        cglobs (Just (t1, Just t2)) = Just ((snd $ cythonize ctx t1), Just (snd $ cythonize ctx t2))
-        cglobs (Just (t1, Nothing)) = Just ((snd $ cythonize ctx t1), Nothing)
+        cglobs (Just (t1, Just t2)) =
+          Just ((snd $ cythonize ctx t1), Just (snd $ cythonize ctx t2))
+        cglobs (Just (t1, Nothing)) =
+          Just ((snd $ cythonize ctx t1), Nothing)
         cglobs Nothing = Nothing
     in (ctx, AST.Exec cexpr (cglobs globs) annot)
 
 instance Cythonizable AST.RaiseExpr where
   cythonize ctx (AST.RaiseV3 (Just (expr1, Just expr2))) =
-    (ctx, AST.RaiseV3 (Just ((snd $ cythonize ctx expr1), Just (snd $ cythonize ctx expr2))))
+    let (_, cexpr1) = cythonize ctx expr1
+        (_, cexpr2) = cythonize ctx expr2
+    in (ctx, AST.RaiseV3 (Just (cexpr1, Just cexpr2)))
   cythonize ctx (AST.RaiseV3 (Just (expr1, Nothing))) =
-    (ctx, AST.RaiseV3 (Just ((snd $ cythonize ctx expr1), Nothing)))
+    let (_, cexpr1) = cythonize ctx expr1
+    in (ctx, AST.RaiseV3 (Just (cexpr1, Nothing)))
   cythonize ctx (AST.RaiseV3 Nothing) = (ctx, AST.RaiseV3 Nothing)
   cythonize ctx (AST.RaiseV2 (Just (expr1, Just (expr2, Just expr3)))) =
-    (ctx, AST.RaiseV2 (Just ((snd $ cythonize ctx expr1), Just ((snd $ cythonize ctx expr2), Just (snd $ cythonize ctx expr3)))))
+    let (_, cexpr1) = cythonize ctx expr1
+        (_, cexpr2) = cythonize ctx expr2
+        (_, cexpr3) = cythonize ctx expr3
+    in (ctx, AST.RaiseV2 (Just (cexpr1, Just (cexpr2, Just cexpr3))))
   cythonize ctx (AST.RaiseV2 (Just (expr1, Just (expr2, Nothing)))) =
-    (ctx, AST.RaiseV2 (Just ((snd $ cythonize ctx expr1), Just ((snd $ cythonize ctx expr2), Nothing))))
+    let (_, cexpr1) = cythonize ctx expr1
+        (_, cexpr2) = cythonize ctx expr2
+    in (ctx, AST.RaiseV2 (Just (cexpr1, Just (cexpr2, Nothing))))
   cythonize ctx (AST.RaiseV2 (Just (expr1, Nothing))) =
-    (ctx, AST.RaiseV2 (Just ((snd $ cythonize ctx expr1), Nothing)))
+    let (_, cexpr1) = cythonize ctx expr1
+    in (ctx, AST.RaiseV2 (Just (cexpr1, Nothing)))
   cythonize ctx (AST.RaiseV2 Nothing) = (ctx, AST.RaiseV2 Nothing)
 
 instance Cythonizable AST.Decorator where
@@ -450,19 +484,3 @@ instance Cythonizable AST.Slice where
     in (ctx, AST.SliceExpr cexpr annot)
   cythonize ctx (AST.SliceEllipsis annot) =
     (ctx, AST.SliceEllipsis annot)
-
-data Context =
-  Context {
-    scope :: Map.Map String CythonType
-  }
-  deriving (Eq,Ord,Show,Typeable,Data)
-
-emptyContext :: Context
-emptyContext = Context { scope = Map.empty }
-
-replaceIdent :: Context -> AST.Ident (Annotation, s) -> Context
-replaceIdent ctx v =
-  let ident = AST.ident_string v
-      (annot, _) = AST.ident_annot v
-      newscope = Map.insert ident (getAnnotationType annot) (scope ctx)
-  in ctx { scope = newscope }
