@@ -18,4 +18,4 @@ main = do
        Right (pymodule, _) ->
         let tree = AST.initCythonAST pymodule
             ctx = AST.emptyContext
-        in putStrLn . prettyText . snd $ AST.cythonize ctx tree
+        in print . snd $ AST.cythonize ctx tree

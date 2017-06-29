@@ -31,4 +31,7 @@ instance Pretty (CType) where
 instance Pretty (CythonType) where
   pretty Unknown = text "object"
   pretty (CType t) = pretty t
+  pretty String = text "str"
+  pretty Bytes = text "bytes"
+  pretty Unicode = text "unicode"
   pretty PythonObject = text "object"

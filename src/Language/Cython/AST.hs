@@ -7,13 +7,31 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe (isNothing)
 import Data.Data
 
-data CBasicType = Char | Short | Int | Long | LongLong | Float | Double
+data CBasicType =
+  Char |
+  Short |
+  Int |
+  Long |
+  LongLong |
+  Float |
+  Double
   deriving (Eq,Ord,Show,Typeable,Data)
 
-data CType = Void | BInt | Signed CBasicType | Unsigned CBasicType | Ptr CType
+data CType =
+  Void |
+  BInt |
+  Signed CBasicType |
+  Unsigned CBasicType |
+  Ptr CType
   deriving (Eq,Ord,Show,Typeable,Data)
 
-data CythonType = Unknown | CType CType | PythonObject
+data CythonType =
+  Unknown |
+  CType CType |
+  String |
+  Bytes |
+  Unicode |
+  PythonObject
   deriving (Eq,Ord,Show,Typeable,Data)
 
 data Annotation =
@@ -381,12 +399,12 @@ instance Cythonizable AST.Expr where
     (ctx, AST.None annot)
   cythonize ctx (AST.Ellipsis annot) =
     (ctx, AST.Ellipsis annot)
-  cythonize ctx (AST.ByteStrings str annot) =
-    (ctx, AST.ByteStrings str annot)
-  cythonize ctx (AST.Strings str annot) =
-    (ctx, AST.Strings str annot)
-  cythonize ctx (AST.UnicodeStrings str annot) =
-    (ctx, AST.UnicodeStrings str annot)
+  cythonize ctx (AST.ByteStrings str (_, annot)) =
+    (ctx, AST.ByteStrings str (Expr Bytes, annot))
+  cythonize ctx (AST.Strings str (_, annot)) =
+    (ctx, AST.Strings str (Expr String, annot))
+  cythonize ctx (AST.UnicodeStrings str (_, annot)) =
+    (ctx, AST.UnicodeStrings str (Expr Unicode, annot))
   cythonize ctx (AST.Call fun args annot) =
     let (_, cfun) = cythonize ctx fun
         (_, cargs) = cythonizeArray ctx args
