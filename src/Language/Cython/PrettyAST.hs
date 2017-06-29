@@ -2,15 +2,9 @@
 
 module Language.Cython.PrettyAST where
 
-import qualified Language.Python.Common.AST as AST
 import Language.Cython.AST
 import Language.Python.Common.Pretty
 import Language.Python.Common.PrettyAST ()
-
-instance {-# OVERLAPS #-} Pretty (AST.Statement (Annotation, a)) where
-  pretty (AST.Assign { AST.assign_to = [to], AST.assign_expr = expr, AST.stmt_annot = (Assign{ cdef = c, ctype = t }, _)})
-    | c = text "cdef " <+> pretty t <+> pretty to <+> text " = "  <+> pretty expr
-    | otherwise = pretty to <+> text " = " <+> pretty expr
 
 instance Pretty (CBasicType) where
   pretty Char = text "char"

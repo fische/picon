@@ -35,20 +35,14 @@ data CythonType =
   deriving (Eq,Ord,Show,Typeable,Data)
 
 data Annotation =
-  Assign {
-    cdef :: Bool,
-    ctype :: CythonType
-  } |
-  Expr {
-    ctype :: CythonType
-  } |
+  CDef Bool |
+  Type CythonType |
   Empty
   deriving (Eq,Ord,Show,Typeable,Data)
 
 getAnnotationType :: Annotation -> CythonType
-getAnnotationType cannot
-  | cannot /= Empty = ctype cannot
-  | otherwise = Unknown
+getAnnotationType (Type typ) = typ
+getAnnotationType _ = Unknown
 
 initCythonAST :: (Functor f) => f annot -> f (Annotation, annot)
 initCythonAST = fmap (\s -> (Empty, s))
@@ -125,7 +119,7 @@ cythonizeContext ctx ((f,s):tl) =
 instance Cythonizable AST.Ident where
   cythonize ctx (AST.Ident ident (_, annot)) =
     let typ = getIdentType ctx ident
-    in (ctx, AST.Ident ident (Expr typ, annot))
+    in (ctx, AST.Ident ident (Type typ, annot))
 
 instance Cythonizable AST.Op
 
@@ -200,8 +194,8 @@ instance Cythonizable AST.Statement where
         ident = AST.ident_string $ AST.var_ident cto
         typ = getAnnotationType . fst $ AST.annot cexpr
         (rctx, rdef, rtyp) = assignIdent ctx ident typ
-        cto = fmap (\(_, s) -> (Expr{ ctype = rtyp }, s)) to
-        cannot = Assign { cdef = rdef, ctype = rtyp }
+        cto = fmap (\(_, s) -> (Type rtyp, s)) to
+        cannot = CDef rdef
     in (rctx, AST.Assign [cto] cexpr (cannot, annot))
   cythonize ctx (AST.Assign tos expr annot) =
     let (_, cexpr) = cythonize ctx expr
@@ -303,7 +297,7 @@ instance Cythonizable AST.Parameter where
                 Just expr -> getAnnotationType . fst $ AST.annot expr
         paramctx = replaceIdent ctx ident typ
         (rctx, cname) = cythonize paramctx name
-    in (rctx, AST.Param cname py_annot cdflt (Expr typ, annot))
+    in (rctx, AST.Param cname py_annot cdflt (Type typ, annot))
   cythonize ctx (AST.VarArgsPos name py_annot annot) =
     let (_, cname) = cythonize ctx name
     in (ctx, AST.VarArgsPos cname py_annot annot)
@@ -397,25 +391,25 @@ instance Cythonizable AST.Expr where
         (typ, _) = AST.annot cident
     in (ctx, AST.Var cident (typ, annot))
   cythonize ctx (AST.Int val lit (_, annot)) =
-    (ctx, AST.Int val lit (Expr . CType $ Signed Int, annot))
+    (ctx, AST.Int val lit (Type . CType $ Signed Int, annot))
   cythonize ctx (AST.LongInt val lit (_, annot)) =
-    (ctx, AST.LongInt val lit (Expr . CType $ Signed Long, annot))
+    (ctx, AST.LongInt val lit (Type . CType $ Signed Long, annot))
   cythonize ctx (AST.Float val lit (_, annot)) =
-    (ctx, AST.Float val lit (Expr . CType $ Signed Double, annot))
+    (ctx, AST.Float val lit (Type . CType $ Signed Double, annot))
   cythonize ctx (AST.Imaginary val lit annot) =
     (ctx, AST.Imaginary val lit annot)
   cythonize ctx (AST.Bool val (_, annot)) =
-    (ctx, AST.Bool val (Expr $ CType BInt, annot))
+    (ctx, AST.Bool val (Type $ CType BInt, annot))
   cythonize ctx (AST.None annot) =
     (ctx, AST.None annot)
   cythonize ctx (AST.Ellipsis annot) =
     (ctx, AST.Ellipsis annot)
   cythonize ctx (AST.ByteStrings str (_, annot)) =
-    (ctx, AST.ByteStrings str (Expr Bytes, annot))
+    (ctx, AST.ByteStrings str (Type Bytes, annot))
   cythonize ctx (AST.Strings str (_, annot)) =
-    (ctx, AST.Strings str (Expr String, annot))
+    (ctx, AST.Strings str (Type String, annot))
   cythonize ctx (AST.UnicodeStrings str (_, annot)) =
-    (ctx, AST.UnicodeStrings str (Expr Unicode, annot))
+    (ctx, AST.UnicodeStrings str (Type Unicode, annot))
   cythonize ctx (AST.Call fun args annot) =
     let (_, cfun) = cythonize ctx fun
         (_, cargs) = cythonizeArray ctx args
