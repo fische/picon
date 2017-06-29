@@ -4,7 +4,7 @@ module Language.Cython.AST where
 
 import qualified Language.Python.Common.AST as AST
 import qualified Data.Map.Strict as Map
-import Data.Maybe (isNothing)
+import Data.Maybe (isNothing, isJust, fromJust)
 import Data.Data
 
 data CBasicType =
@@ -48,7 +48,7 @@ data Annotation =
 getAnnotationType :: Annotation -> CythonType
 getAnnotationType cannot
   | cannot /= Empty = ctype cannot
-  | otherwise = PythonObject
+  | otherwise = Unknown
 
 initCythonAST :: (Functor f) => f annot -> f (Annotation, annot)
 initCythonAST = fmap (\s -> (Empty, s))
@@ -61,6 +61,12 @@ data Context =
 
 emptyContext :: Context
 emptyContext = Context { scope = Map.empty }
+
+getIdentType :: Context -> String -> CythonType
+getIdentType ctx ident
+  | isJust typ = fromJust typ
+  | otherwise = Unknown
+  where typ = Map.lookup ident (scope ctx)
 
 replaceIdent :: Context -> String -> CythonType -> Context
 replaceIdent ctx ident typ =
@@ -116,7 +122,10 @@ cythonizeContext ctx ((f,s):tl) =
       (rctx, rtl) = cythonizeContext tmpctx2 tl
   in (rctx, (cf, cs):rtl)
 
-instance Cythonizable AST.Ident
+instance Cythonizable AST.Ident where
+  cythonize ctx (AST.Ident ident (_, annot)) =
+    let typ = getIdentType ctx ident
+    in (ctx, AST.Ident ident (Expr typ, annot))
 
 instance Cythonizable AST.Op
 
@@ -174,10 +183,9 @@ instance Cythonizable AST.Statement where
     in (ctx, AST.For ctargets cgen cbody celse annot)
   cythonize ctx (AST.Fun name args result body annot) =
     let (_, cname) = cythonize ctx name
-        (_, cargs) = cythonizeArray ctx args
-        (_, cbody) = cythonizeArray ctx body
-        (_, cresult) = cythonizeMaybe ctx result
-    in (ctx, AST.Fun cname cargs cresult cbody annot)
+        (functx, cargs) = cythonizeArray ctx args
+        (_, cbody) = cythonizeArray functx body
+    in (ctx, AST.Fun cname cargs result cbody annot)
   cythonize ctx (AST.Class name args body annot) =
     let (_, cname) = cythonize ctx name
         (_, cargs) = cythonizeArray ctx args
@@ -287,19 +295,21 @@ instance Cythonizable AST.Decorator where
     in (ctx, AST.Decorator cname cargs annot)
 
 instance Cythonizable AST.Parameter where
-  cythonize ctx (AST.Param name py_annot dflt annot) =
-    let (_, cname) = cythonize ctx name
-        (_, cpy_annot) = cythonizeMaybe ctx py_annot
-        (_, cdflt) = cythonizeMaybe ctx dflt
-    in (ctx, AST.Param cname cpy_annot cdflt annot)
+  cythonize ctx (AST.Param name py_annot dflt (_, annot)) =
+    let (_, cdflt) = cythonizeMaybe ctx dflt
+        ident = AST.ident_string name
+        typ = case cdflt of
+                Nothing -> Unknown
+                Just expr -> getAnnotationType . fst $ AST.annot expr
+        paramctx = replaceIdent ctx ident typ
+        (rctx, cname) = cythonize paramctx name
+    in (rctx, AST.Param cname py_annot cdflt (Expr typ, annot))
   cythonize ctx (AST.VarArgsPos name py_annot annot) =
     let (_, cname) = cythonize ctx name
-        (_, cpy_annot) = cythonizeMaybe ctx py_annot
-    in (ctx, AST.VarArgsPos cname cpy_annot annot)
+    in (ctx, AST.VarArgsPos cname py_annot annot)
   cythonize ctx (AST.VarArgsKeyword name py_annot annot) =
     let (_, cname) = cythonize ctx name
-        (_, cpy_annot) = cythonizeMaybe ctx py_annot
-    in (ctx, AST.VarArgsKeyword cname cpy_annot annot)
+    in (ctx, AST.VarArgsKeyword cname py_annot annot)
   cythonize ctx (AST.EndPositional annot) = (ctx, AST.EndPositional annot)
   cythonize ctx (AST.UnPackTuple unpack dflt annot) =
     let (_, cunpack) = cythonize ctx unpack
@@ -382,9 +392,10 @@ instance Cythonizable AST.CompIter where
     in (ctx, AST.IterIf citer annot)
 
 instance Cythonizable AST.Expr where
-  cythonize ctx (AST.Var ident annot) =
+  cythonize ctx (AST.Var ident (_, annot)) =
     let (_, cident) = cythonize ctx ident
-    in (ctx, AST.Var cident annot)
+        (typ, _) = AST.annot cident
+    in (ctx, AST.Var cident (typ, annot))
   cythonize ctx (AST.Int val lit (_, annot)) =
     (ctx, AST.Int val lit (Expr . CType $ Signed Int, annot))
   cythonize ctx (AST.LongInt val lit (_, annot)) =
