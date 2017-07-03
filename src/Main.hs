@@ -9,6 +9,8 @@ import Language.Python.Common.PrettyParseError ()
 import qualified Language.Cython.AST as AST
 import Language.Cython.PrettyAST ()
 
+import Control.Monad.State
+
 main :: IO ()
 main = do
   [file] <- Env.getArgs -- TODO Handle correctly args
@@ -18,4 +20,4 @@ main = do
        Right (pymodule, _) ->
         let tree = AST.initCythonAST pymodule
             ctx = AST.emptyContext
-        in print . snd $ AST.cythonize ctx tree
+        in print . fst $ runState (AST.cythonize tree) ctx
