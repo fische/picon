@@ -4,7 +4,7 @@ module Language.Cython.AST where
 
 import qualified Language.Python.Common.AST as AST
 import qualified Data.Map.Strict as Map
-import Data.Maybe (isNothing, isJust, fromJust)
+import Data.Maybe (isNothing, fromMaybe)
 import Control.Monad.State
 import Data.Data
 
@@ -57,22 +57,25 @@ data Context =
 emptyContext :: Context
 emptyContext = Context { scope = Map.empty }
 
-getIdentType :: Context -> String -> CythonType
-getIdentType ctx ident
-  | isJust typ = fromJust typ
-  | otherwise = Unknown
-  where typ = Map.lookup ident (scope ctx)
+getIdentType :: String -> State Context CythonType
+getIdentType ident = do
+  ctx <- get
+  return (fromMaybe Unknown (Map.lookup ident (scope ctx)))
 
-replaceIdent :: Context -> String -> CythonType -> Context
-replaceIdent ctx ident typ =
-  ctx { scope = Map.insert ident typ (scope ctx) }
+insertIdent :: String -> CythonType -> State Context ()
+insertIdent ident typ = do
+  ctx <- get
+  put (ctx{ scope = Map.insert ident typ (scope ctx) })
+  return ()
 
 -- TODO Compare CTypes, change if needed and return it
-assignIdent :: Context -> String -> CythonType -> (Context, Bool)
-assignIdent ctx ident typ =
+assignIdent :: String -> CythonType -> State Context Bool
+assignIdent ident typ = do
+  ctx <- get
   let (old, newscope) =
         Map.insertLookupWithKey (\_ _ new -> new) ident typ (scope ctx)
-  in (ctx { scope = newscope }, isNothing old)
+  put (ctx{ scope = newscope })
+  return (isNothing old)
 
 class Cythonizable t where
   cythonize :: t (Annotation, annot)
@@ -118,8 +121,8 @@ cythonizeContext ((f,s):tl) = do
 
 instance Cythonizable AST.Ident where
   cythonize (AST.Ident ident (_, annot)) = do
-    ctx <- get
-    return (AST.Ident ident (Type (getIdentType ctx ident), annot))
+    typ <- getIdentType ident
+    return (AST.Ident ident (Type typ, annot))
 
 instance Cythonizable AST.Op
 
@@ -191,14 +194,11 @@ instance Cythonizable AST.Statement where
     return (AST.Conditional cguards celse annot)
   cythonize (AST.Assign [to@AST.Var{}] expr (_, annot)) = do
     cexpr <- cythonize expr
-    ctx <- get
     let ident = AST.ident_string $ AST.var_ident to
         typ = getAnnotationType . fst $ AST.annot cexpr
-        (rctx, rdef) = assignIdent ctx ident typ
-        cannot = CDef rdef
-    put rctx
+    rdef <- assignIdent ident typ
     cto <- cythonize to
-    return (AST.Assign [cto] cexpr (cannot, annot))
+    return (AST.Assign [cto] cexpr (CDef rdef, annot))
   cythonize (AST.Assign tos expr annot) = do
     cexpr <- cythonize expr
     ctos <- cythonizeArray tos
@@ -298,8 +298,7 @@ instance Cythonizable AST.Parameter where
         typ = case cdflt of
                 Nothing -> Unknown
                 Just expr -> getAnnotationType . fst $ AST.annot expr
-    ctx <- get
-    put $ replaceIdent ctx ident typ
+    insertIdent ident typ
     cname <- cythonize name
     return (AST.Param cname py_annot cdflt (Type typ, annot))
   cythonize (AST.VarArgsPos name py_annot annot) = do
