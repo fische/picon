@@ -5,6 +5,10 @@ module Language.Cython.PrettyAST where
 import Language.Cython.AST
 import Language.Python.Common.Pretty
 import Language.Python.Common.PrettyAST ()
+import qualified Language.Python.Common.AST as AST
+
+instance {-# OVERLAPS #-} Pretty (AST.Statement (Annotation, s)) where
+  pretty _ = text "test"
 
 instance Pretty (CBasicType) where
   pretty Char = text "char"
