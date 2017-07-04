@@ -104,8 +104,9 @@ cythonizeGuards :: (Cythonizable c) =>
   -> State Context [(c (Annotation, s), AST.Suite (Annotation, s))]
 cythonizeGuards [] = return []
 cythonizeGuards ((f,s):tl) = do
-  cf <- cythonize f
-  cs <- cythonizeArray s
+  ctx <- get
+  let (cf, _) = runState (cythonize f) ctx
+      (cs, _) = runState (cythonizeArray s) ctx
   rtl <- cythonizeGuards tl
   return ((cf, cs):rtl)
 
@@ -169,28 +170,33 @@ instance Cythonizable AST.Statement where
     return (AST.FromImport cm citems annot)
   cythonize (AST.While cond body e annot) = do
     ccond <- cythonize cond
-    cbody <- cythonizeArray body
-    celse <- cythonizeArray e
+    ctx <- get
+    let (cbody, _) = runState (cythonizeArray body) ctx
+        (celse, _) = runState (cythonizeArray e) ctx
     return (AST.While ccond cbody celse annot)
   cythonize (AST.For targets gen body e annot) = do
     ctargets <- cythonizeArray targets
     cgen <- cythonize gen
-    cbody <- cythonizeArray body
-    celse <- cythonizeArray e
+    ctx <- get
+    let (cbody, _) = runState (cythonizeArray body) ctx
+        (celse, _) = runState (cythonizeArray e) ctx
     return (AST.For ctargets cgen cbody celse annot)
   cythonize (AST.Fun name args result body annot) = do
     cname <- cythonize name
-    cargs <- cythonizeArray args
-    cbody <- cythonizeArray body
+    ctx <- get
+    let (cargs, argsctx) = runState (cythonizeArray args) ctx
+        (cbody, _) = runState (cythonizeArray body) argsctx
     return (AST.Fun cname cargs result cbody annot)
   cythonize (AST.Class name args body annot) = do
     cname <- cythonize name
-    cargs <- cythonizeArray args
-    cbody <- cythonizeArray body
+    ctx <- get
+    let (cargs, argsctx) = runState (cythonizeArray args) ctx
+        (cbody, _) = runState (cythonizeArray body) argsctx
     return (AST.Class cname cargs cbody annot)
   cythonize (AST.Conditional guards e annot) = do
     cguards <- cythonizeGuards guards
-    celse <- cythonizeArray e
+    ctx <- get
+    let (celse, _) = runState (cythonizeArray e) ctx
     return (AST.Conditional cguards celse annot)
   cythonize (AST.Assign [to@AST.Var{}] expr (_, annot)) = do
     cexpr <- cythonize expr
@@ -216,10 +222,11 @@ instance Cythonizable AST.Statement where
     cexpr <- cythonizeMaybe expr
     return (AST.Return cexpr annot)
   cythonize (AST.Try body excepts e fin annot) = do
-    cbody <- cythonizeArray body
+    ctx <- get
+    let (cbody, _) = runState (cythonizeArray body) ctx
     cexcepts <- cythonizeArray excepts
-    celse <- cythonizeArray e
-    cfin <- cythonizeArray fin
+    let (celse, _) = runState (cythonizeArray e) ctx
+        (cfin, _) = runState (cythonizeArray fin) ctx
     return (AST.Try cbody cexcepts celse cfin annot)
   cythonize (AST.Raise expr annot) = do
     cexpr <- cythonize expr
@@ -338,8 +345,9 @@ instance Cythonizable AST.Argument where
 
 instance Cythonizable AST.Handler where
   cythonize (AST.Handler clause suite annot) = do
-    cclause <- cythonize clause
-    csuite <- cythonizeArray suite
+    ctx <- get
+    let (cclause, _) = runState (cythonize clause) ctx
+        (csuite, _) = runState (cythonizeArray suite) ctx
     return (AST.Handler cclause csuite annot)
 
 instance Cythonizable AST.ExceptClause where

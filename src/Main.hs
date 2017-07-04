@@ -16,8 +16,8 @@ main = do
   [file] <- Env.getArgs -- TODO Handle correctly args
   code <- readFile file
   case Python2.parseModule code file of
-       Left err -> putStrLn $ prettyText err
-       Right (pymodule, _) ->
+      Left err -> putStrLn $ prettyText err
+      Right (pymodule, _) ->
         let tree = AST.initCythonAST pymodule
             ctx = AST.emptyContext
         in print . fst $ runState (AST.cythonize tree) ctx
