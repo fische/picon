@@ -50,12 +50,16 @@ initCythonAST = fmap (\s -> (Empty, s))
 
 data Context =
   Context {
+    inGlobalScope :: Bool,
     scope :: Map.Map String CythonType
   }
   deriving (Eq,Ord,Show,Typeable,Data)
 
 emptyContext :: Context
-emptyContext = Context { scope = Map.empty }
+emptyContext = Context {
+  inGlobalScope = False,
+  scope = Map.empty
+}
 
 getIdentType :: String -> State Context CythonType
 getIdentType ident = do
@@ -105,8 +109,9 @@ cythonizeGuards :: (Cythonizable c) =>
 cythonizeGuards [] = return []
 cythonizeGuards ((f,s):tl) = do
   ctx <- get
-  let (cf, _) = runState (cythonize f) ctx
-      (cs, _) = runState (cythonizeArray s) ctx
+  let rctx = ctx{inGlobalScope = False}
+      (cf, _) = runState (cythonize f) rctx
+      (cs, _) = runState (cythonizeArray s) rctx
   rtl <- cythonizeGuards tl
   return ((cf, cs):rtl)
 
@@ -131,7 +136,9 @@ instance Cythonizable AST.AssignOp
 
 instance Cythonizable AST.Module where
   cythonize (AST.Module stmts) = do
-    rstmts <- cythonizeArray stmts
+    ctx <- get
+    let rctx = ctx{inGlobalScope = True}
+        (rstmts, _) = runState (cythonizeArray stmts) rctx
     return (AST.Module(rstmts))
 
 instance Cythonizable AST.ImportItem where
@@ -171,32 +178,37 @@ instance Cythonizable AST.Statement where
   cythonize (AST.While cond body e annot) = do
     ccond <- cythonize cond
     ctx <- get
-    let (cbody, _) = runState (cythonizeArray body) ctx
-        (celse, _) = runState (cythonizeArray e) ctx
+    let rctx = ctx{inGlobalScope = False}
+        (cbody, _) = runState (cythonizeArray body) rctx
+        (celse, _) = runState (cythonizeArray e) rctx
     return (AST.While ccond cbody celse annot)
   cythonize (AST.For targets gen body e annot) = do
     ctargets <- cythonizeArray targets
     cgen <- cythonize gen
     ctx <- get
-    let (cbody, _) = runState (cythonizeArray body) ctx
-        (celse, _) = runState (cythonizeArray e) ctx
+    let rctx = ctx{inGlobalScope = False}
+        (cbody, _) = runState (cythonizeArray body) rctx
+        (celse, _) = runState (cythonizeArray e) rctx
     return (AST.For ctargets cgen cbody celse annot)
   cythonize (AST.Fun name args result body annot) = do
     cname <- cythonize name
     ctx <- get
-    let (cargs, argsctx) = runState (cythonizeArray args) ctx
+    let rctx = ctx{inGlobalScope = False}
+        (cargs, argsctx) = runState (cythonizeArray args) rctx
         (cbody, _) = runState (cythonizeArray body) argsctx
     return (AST.Fun cname cargs result cbody annot)
   cythonize (AST.Class name args body annot) = do
     cname <- cythonize name
     ctx <- get
-    let (cargs, argsctx) = runState (cythonizeArray args) ctx
+    let rctx = ctx{inGlobalScope = False}
+        (cargs, argsctx) = runState (cythonizeArray args) rctx
         (cbody, _) = runState (cythonizeArray body) argsctx
     return (AST.Class cname cargs cbody annot)
   cythonize (AST.Conditional guards e annot) = do
     cguards <- cythonizeGuards guards
     ctx <- get
-    let (celse, _) = runState (cythonizeArray e) ctx
+    let rctx = ctx{inGlobalScope = False}
+        (celse, _) = runState (cythonizeArray e) rctx
     return (AST.Conditional cguards celse annot)
   cythonize (AST.Assign [to@AST.Var{}] expr (_, annot)) = do
     cexpr <- cythonize expr
@@ -223,10 +235,11 @@ instance Cythonizable AST.Statement where
     return (AST.Return cexpr annot)
   cythonize (AST.Try body excepts e fin annot) = do
     ctx <- get
-    let (cbody, _) = runState (cythonizeArray body) ctx
+    let rctx = ctx{inGlobalScope = False}
+        (cbody, _) = runState (cythonizeArray body) rctx
     cexcepts <- cythonizeArray excepts
-    let (celse, _) = runState (cythonizeArray e) ctx
-        (cfin, _) = runState (cythonizeArray fin) ctx
+    let (celse, _) = runState (cythonizeArray e) rctx
+        (cfin, _) = runState (cythonizeArray fin) rctx
     return (AST.Try cbody cexcepts celse cfin annot)
   cythonize (AST.Raise expr annot) = do
     cexpr <- cythonize expr
@@ -346,8 +359,9 @@ instance Cythonizable AST.Argument where
 instance Cythonizable AST.Handler where
   cythonize (AST.Handler clause suite annot) = do
     ctx <- get
-    let (cclause, _) = runState (cythonize clause) ctx
-        (csuite, _) = runState (cythonizeArray suite) ctx
+    let rctx = ctx{inGlobalScope = False}
+        (cclause, _) = runState (cythonize clause) rctx
+        (csuite, _) = runState (cythonizeArray suite) rctx
     return (AST.Handler cclause csuite annot)
 
 instance Cythonizable AST.ExceptClause where
