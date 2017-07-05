@@ -1,102 +1,14 @@
-{-# LANGUAGE DeriveDataTypeable, DefaultSignatures #-}
+{-# LANGUAGE DefaultSignatures #-}
 
 module Language.Cython.AST where
 
 import qualified Language.Python.Common.AST as AST
-import qualified Data.Map.Strict as Map
-import Data.Maybe (isNothing)
 import Control.Monad.State
-import Data.Data
-
-data CBasicType =
-  Char |
-  Short |
-  Int |
-  Long |
-  LongLong |
-  Float |
-  Double
-  deriving (Eq,Ord,Show,Typeable,Data)
-
-data CType =
-  Void |
-  BInt |
-  Signed CBasicType |
-  Unsigned CBasicType |
-  Ptr CType
-  deriving (Eq,Ord,Show,Typeable,Data)
-
-data CythonType =
-  Unknown |
-  CType CType |
-  String |
-  Bytes |
-  Unicode |
-  PythonObject
-  deriving (Eq,Ord,Show,Typeable,Data)
-
-data Annotation =
-  CDef Bool |
-  Type CythonType |
-  Empty
-  deriving (Eq,Ord,Show,Typeable,Data)
-
-getAnnotationType :: Annotation -> CythonType
-getAnnotationType (Type typ) = typ
-getAnnotationType _ = Unknown
+import Language.Cython.Annotation
+import Language.Cython.Context
 
 initCythonAST :: (Functor f) => f annot -> f (Annotation, annot)
 initCythonAST = fmap (\s -> (Empty, s))
-
-data Var =
-  Local { ctype :: CythonType } |
-  NonLocal { ctype :: CythonType } |
-  Global { ctype :: CythonType }
-  deriving (Eq,Ord,Show,Typeable,Data)
-
-data Context =
-  Context {
-    inGlobalScope :: Bool,
-    outerVars :: Map.Map String CythonType,
-    localVars :: Map.Map String CythonType
-  }
-  deriving (Eq,Ord,Show,Typeable,Data)
-
-emptyContext :: Context
-emptyContext = Context {
-  inGlobalScope = False,
-  outerVars = Map.empty,
-  localVars = Map.empty
-}
-
-getVarType :: String -> State Context CythonType
-getVarType ident = do
-  ctx <- get
-  return (Map.findWithDefault
-    (Map.findWithDefault Unknown ident (outerVars ctx)) ident (localVars ctx))
-
-insertVar :: String -> CythonType -> State Context ()
-insertVar ident typ = do
-  ctx <- get
-  put (ctx{ localVars = Map.insert ident typ (localVars ctx) })
-  return ()
-
--- TODO Compare CTypes, change if needed and return it
-assignVar :: String -> CythonType -> State Context Bool
-assignVar ident typ = do
-  ctx <- get
-  let changeType _ old Unknown = old
-      changeType _ _ new = new
-      (oldValue, newscope) =
-        Map.insertLookupWithKey changeType ident typ (localVars ctx)
-  put (ctx{ localVars = newscope })
-  return (isNothing oldValue)
-
-newScope :: State Context Context
-newScope = do
-  ctx <- get
-  let outer = Map.union (localVars ctx) (outerVars ctx)
-  return (ctx{inGlobalScope = False, outerVars = outer, localVars = Map.empty})
 
 class Cythonizable t where
   cythonize :: t (Annotation, annot)

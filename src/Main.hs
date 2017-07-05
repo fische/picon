@@ -6,9 +6,9 @@ import qualified Language.Python.Version2 as Python2 (parseModule)
 import Language.Python.Common.Pretty (prettyText)
 import Language.Python.Common.PrettyParseError ()
 
-import qualified Language.Cython.AST as AST
 import Language.Cython.PrettyAST ()
-
+import Language.Cython.AST
+import Language.Cython.Context
 import Control.Monad.State
 
 main :: IO ()
@@ -18,6 +18,6 @@ main = do
   case Python2.parseModule code file of
       Left err -> putStrLn $ prettyText err
       Right (pymodule, _) ->
-        let tree = AST.initCythonAST pymodule
-            ctx = AST.emptyContext
-        in print . fst $ runState (AST.cythonize tree) ctx
+        let tree = initCythonAST pymodule
+            ctx = emptyContext
+        in print . fst $ runState (cythonize tree) ctx
