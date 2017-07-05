@@ -215,9 +215,8 @@ instance Cythonizable AST.Statement where
     return (AST.Fun cname cargs result cbody annot)
   cythonize (AST.Class name args body annot) = do
     cname <- cythonize name
-    ctx <- get
-    let rctx = ctx{inGlobalScope = False}
-        (cargs, argsctx) = runState (cythonizeArray args) rctx
+    rctx <- newScope
+    let (cargs, argsctx) = runState (cythonizeArray args) rctx
         (cbody, _) = runState (cythonizeArray body) argsctx
     return (AST.Class cname cargs cbody annot)
   cythonize (AST.Conditional guards e annot) = do
