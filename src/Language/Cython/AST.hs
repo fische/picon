@@ -37,9 +37,10 @@ cythonizeGuards :: (Cythonizable c) =>
   -> State Context [(c (Annotation, s), AST.Suite (Annotation, s))]
 cythonizeGuards [] = return []
 cythonizeGuards ((f,s):tl) = do
-  rctx <- copyScope
-  let (cf, _) = runState (cythonize f) rctx
-      (cs, _) = runState (cythonizeArray s) rctx
+  ctx <- copyContext
+  let (cf, tmpctx1) = runState (cythonize f) ctx
+      (cs, rctx) = runState (cythonizeArray s) tmpctx1
+  _ <- mergeCopiedContext rctx
   rtl <- cythonizeGuards tl
   return ((cf, cs):rtl)
 
@@ -64,7 +65,7 @@ instance Cythonizable AST.AssignOp
 
 instance Cythonizable AST.Module where
   cythonize (AST.Module stmts) = do
-    ctx <- get
+    ctx <- copyContext
     let rctx = ctx{inGlobalScope = True}
         (rstmts, _) = runState (cythonizeArray stmts) rctx
     return (AST.Module(rstmts))
@@ -105,33 +106,40 @@ instance Cythonizable AST.Statement where
     return (AST.FromImport cm citems annot)
   cythonize (AST.While cond body e annot) = do
     ccond <- cythonize cond
-    rctx <- copyScope
-    let (cbody, _) = runState (cythonizeArray body) rctx
-        (celse, _) = runState (cythonizeArray e) rctx
+    ctx <- copyContext
+    let (cbody, tmpctx1) = runState (cythonizeArray body) ctx
+    tmpctx2 <- mergeCopiedContext tmpctx1
+    let (celse, rctx) = runState (cythonizeArray e) tmpctx2
+    _ <- mergeCopiedContext rctx
     return (AST.While ccond cbody celse annot)
   cythonize (AST.For targets gen body e annot) = do
     ctargets <- cythonizeArray targets
     cgen <- cythonize gen
-    rctx <- copyScope
-    let (cbody, _) = runState (cythonizeArray body) rctx
-        (celse, _) = runState (cythonizeArray e) rctx
+    ctx <- copyContext
+    let (cbody, tmpctx1) = runState (cythonizeArray body) ctx
+    tmpctx2 <- mergeCopiedContext tmpctx1
+    let (celse, rctx) = runState (cythonizeArray e) tmpctx2
+    _ <- mergeCopiedContext rctx
     return (AST.For ctargets cgen cbody celse annot)
   cythonize (AST.Fun name args result body annot) = do
     cname <- cythonize name
-    rctx <- newScope
-    let (cargs, argsctx) = runState (cythonizeArray args) rctx
-        (cbody, _) = runState (cythonizeArray body) argsctx
+    ctx <- openNewContext
+    let (cargs, argsctx) = runState (cythonizeArray args) ctx
+        (cbody, rctx) = runState (cythonizeArray body) argsctx
+    _ <- mergeInnerContext rctx
     return (AST.Fun cname cargs result cbody annot)
   cythonize (AST.Class name args body annot) = do
     cname <- cythonize name
-    rctx <- newScope
-    let (cargs, argsctx) = runState (cythonizeArray args) rctx
-        (cbody, _) = runState (cythonizeArray body) argsctx
+    ctx <- openNewContext
+    let (cargs, argsctx) = runState (cythonizeArray args) ctx
+        (cbody, rctx) = runState (cythonizeArray body) argsctx
+    _ <- mergeInnerContext rctx
     return (AST.Class cname cargs cbody annot)
   cythonize (AST.Conditional guards e annot) = do
     cguards <- cythonizeGuards guards
-    rctx <- copyScope
-    let (celse, _) = runState (cythonizeArray e) rctx
+    ctx <- copyContext
+    let (celse, rctx) = runState (cythonizeArray e) ctx
+    _ <- mergeCopiedContext rctx
     return (AST.Conditional cguards celse annot)
   cythonize (AST.Assign [to@AST.Var{}] expr (_, annot)) = do
     cexpr <- cythonize expr
@@ -157,11 +165,14 @@ instance Cythonizable AST.Statement where
     cexpr <- cythonizeMaybe expr
     return (AST.Return cexpr annot)
   cythonize (AST.Try body excepts e fin annot) = do
-    rctx <- copyScope
-    let (cbody, _) = runState (cythonizeArray body) rctx
+    ctx <- copyContext
+    let (cbody, tmpctx1) = runState (cythonizeArray body) ctx
+    tmpctx2 <- mergeCopiedContext tmpctx1
     cexcepts <- cythonizeArray excepts
-    let (celse, _) = runState (cythonizeArray e) rctx
-        (cfin, _) = runState (cythonizeArray fin) rctx
+    let (celse, tmpctx3) = runState (cythonizeArray e) tmpctx2
+    tmpctx4 <- mergeCopiedContext tmpctx3
+    let (cfin, rctx) = runState (cythonizeArray fin) tmpctx4
+    _ <- mergeCopiedContext rctx
     return (AST.Try cbody cexcepts celse cfin annot)
   cythonize (AST.Raise expr annot) = do
     cexpr <- cythonize expr
@@ -282,9 +293,11 @@ instance Cythonizable AST.Argument where
 
 instance Cythonizable AST.Handler where
   cythonize (AST.Handler clause suite annot) = do
-    rctx <- copyScope
-    let (cclause, _) = runState (cythonize clause) rctx
-        (csuite, _) = runState (cythonizeArray suite) rctx
+    ctx <- copyContext
+    let (cclause, tmpctx1) = runState (cythonize clause) ctx
+    tmpctx2 <- mergeCopiedContext tmpctx1
+    let (csuite, rctx) = runState (cythonizeArray suite) tmpctx2
+    _ <- mergeCopiedContext rctx
     return (AST.Handler cclause csuite annot)
 
 instance Cythonizable AST.ExceptClause where
