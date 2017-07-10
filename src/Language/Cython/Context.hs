@@ -30,7 +30,7 @@ data Context =
   Context {
     inGlobalScope :: Bool,
     globalVars :: Map.Map String CythonType,
-    outerVars :: Map.Map String Var,
+    outerVars :: Map.Map String CythonType,
     localVars :: Map.Map String Var
   }
   deriving (Eq,Ord,Show,Typeable,Data)
@@ -47,11 +47,10 @@ getVarType :: String -> State Context CythonType
 getVarType ident = do
   ctx <- get
   -- TODO Handle default value as exception
-  return (cytype $ Map.findWithDefault
-    (Map.findWithDefault (Global $
-      Map.findWithDefault Unknown ident (globalVars ctx))
-      ident (outerVars ctx))
-    ident (localVars ctx))
+  let local = Map.lookup ident (localVars ctx)
+  return (maybe (Map.findWithDefault
+    (Map.findWithDefault Unknown ident (globalVars ctx))
+    ident (outerVars ctx)) cytype local)
 
 insertVar :: String -> CythonType -> State Context ()
 insertVar ident typ = do
@@ -73,7 +72,7 @@ mergeVarType old new = old{cytype = mergeCythonType (cytype old) (cytype new)}
 assignVar :: String -> CythonType -> State Context Bool
 assignVar ident typ = do
   ctx <- get
-  let insertIdent f v s = Map.insertLookupWithKey (const f) ident v s
+  let insertIdent f = Map.insertLookupWithKey (const f) ident
       (rctx, def) = if inGlobalScope ctx
                       then
                         let scope = globalVars ctx
@@ -90,12 +89,13 @@ assignVar ident typ = do
 bindGlobalVars' :: Context -> [String] -> Context
 bindGlobalVars' ctx [] = ctx
 bindGlobalVars' ctx (ident:tl) =
+  -- TODO Raise exception when a local var exists
   let lVars = localVars ctx
       gVars = globalVars ctx
       local = Map.lookup ident lVars
       glob = Map.findWithDefault Unknown ident gVars
       dfltTyp = mergeCythonType glob Unknown
-      typ = maybe dfltTyp (\l -> mergeCythonType glob (cytype l)) local
+      typ = maybe dfltTyp (mergeCythonType glob . cytype) local
   in bindGlobalVars' (ctx{
     localVars = Map.insert ident (Global typ) lVars
   }) tl
@@ -111,16 +111,15 @@ bindNonLocalVars' :: Context -> [String] -> Context
 bindNonLocalVars' ctx [] = ctx
 bindNonLocalVars' ctx (ident:tl) =
   -- TODO Raise exception when var not in outer
-  -- TODO Raise exception when var is a global
+  -- TODO Raise exception when a local var exists
   let lVars = localVars ctx
-      oVars = outerVars ctx
       local = Map.findWithDefault (Local Unknown) ident lVars
-      outer = Map.lookup ident oVars
+      outer = Map.lookup ident (outerVars ctx)
       rctx = maybe ctx
-        (\oVar -> let typ = mergeCythonType (cytype oVar) (cytype local)
-                  in ctx{
-                    localVars = Map.insert ident (NonLocal typ) lVars
-                  })
+        (\outerType -> let typ = mergeCythonType outerType (cytype local)
+          in ctx{
+            localVars = Map.insert ident (NonLocal typ) lVars
+          })
         outer
   in bindNonLocalVars' rctx tl
 
@@ -133,12 +132,16 @@ bindNonLocalVars idents = do
 
 mergeLocalVars :: Context -> Context
 mergeLocalVars ctx =
-  let filtered = Map.filter (not . isLocal) (localVars ctx)
-      (boundGlobals, boundNonLocals) = Map.partition isGlobal filtered
-      newOuter = Map.unionWith mergeVarType (outerVars ctx) boundNonLocals
+  let boundVars = Map.filter (not . isLocal) (localVars ctx)
+      (boundGlobalVars, boundNonLocalVars) = Map.partition isGlobal boundVars
+      boundNonLocals = fmap cytype boundNonLocalVars
+      newOuter = Map.unionWith mergeCythonType (outerVars ctx) boundNonLocals
+      boundGlobals = fmap cytype boundGlobalVars
+      newGlobal = Map.unionWith mergeCythonType (globalVars ctx) boundGlobals
   in ctx{
-    globalVars = fmap cytype boundGlobals,
-    outerVars = newOuter
+    globalVars = newGlobal,
+    outerVars = newOuter,
+    localVars = Map.empty
   }
 
 mergeCopiedContext :: Context -> State Context Context
@@ -146,15 +149,17 @@ mergeCopiedContext copied = do
   ctx <- get
   let rctx = if inGlobalScope ctx
       then
-        ctx{
-          globalVars = Map.intersection (globalVars copied) (globalVars ctx)
+        let copiedVars = globalVars copied
+            currVars = globalVars ctx
+        in ctx{
+          globalVars = Map.intersectionWith mergeCythonType currVars copiedVars
         }
       else
         let merged = mergeLocalVars ctx
-            copiedLocal = localVars copied
-            currLocal = localVars ctx
+            copiedVars = localVars copied
+            currVars = localVars ctx
         in merged{
-          localVars = Map.intersectionWith mergeVarType copiedLocal currLocal
+          localVars = Map.intersectionWith mergeVarType currVars copiedVars
         }
   put rctx
   return rctx
@@ -163,13 +168,20 @@ mergeInnerContext :: Context -> State Context Context
 mergeInnerContext inner = do
   ctx <- get
   let mergedInner = mergeLocalVars inner
-      innerOuter = outerVars mergedInner
-      newLocalVars = Map.intersection innerOuter (localVars ctx)
-      modifiedOuterVars = Map.difference innerOuter newLocalVars
+      mergedGlobals = globalVars mergedInner
+      mergedOuter = outerVars mergedInner
+      currLocals = localVars ctx
+      (nonGlobals, boundGlobals) = Map.partition (not . isGlobal) currLocals
+      intersectVarType old new = old{cytype = mergeCythonType (cytype old) new}
+      newNonGlobals =
+        Map.intersectionWith intersectVarType nonGlobals mergedOuter
+      newBoundGlobals =
+        Map.intersectionWith intersectVarType boundGlobals mergedGlobals
+      newOuter = Map.difference mergedOuter (Map.filter isLocal newNonGlobals)
       rctx = ctx{
-        globalVars = (globalVars mergedInner),
-        outerVars = Map.union modifiedOuterVars (outerVars ctx),
-        localVars = newLocalVars
+        globalVars = mergedGlobals,
+        outerVars = Map.union newOuter (outerVars ctx),
+        localVars = Map.union newNonGlobals newBoundGlobals
       }
   put rctx
   return rctx
@@ -182,5 +194,6 @@ copyContext = do
 openNewContext :: State Context Context
 openNewContext = do
   ctx <- get
-  let outer = Map.union (localVars ctx) (outerVars ctx)
+  let locals = Map.filter isLocal (localVars ctx)
+      outer = Map.union locals (outerVars ctx)
   return (ctx{inGlobalScope = False, outerVars = outer, localVars = Map.empty})
