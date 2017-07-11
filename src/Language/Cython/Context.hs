@@ -8,8 +8,9 @@ import Control.Monad.Trans.Except
 import Data.Maybe (isNothing, fromJust, maybe)
 import Data.Data
 import Language.Cython.Annotation
+import Language.Cython.Error
 
-type ContextState = ExceptT String (State Context)
+type ContextState annot = ExceptT (Error annot) (State Context)
 
 data Var =
   Local { cytype :: CythonType } |
@@ -46,15 +47,15 @@ emptyContext = Context {
   localVars = Map.empty
 }
 
-getVarType :: String -> ContextState CythonType
-getVarType ident = do
+getVarType :: annot -> String -> ContextState annot CythonType
+getVarType loc ident = do
   ctx <- get
-  let err = "Identifier " ++ ident ++ " was not found"
+  let err = errVarNotFound loc ident
       global = maybe (throwE err) return $ Map.lookup ident (globalVars ctx)
       outer = maybe global return $ Map.lookup ident (outerVars ctx)
   maybe outer (return . cytype) $ Map.lookup ident (localVars ctx)
 
-insertVar :: String -> CythonType -> ContextState ()
+insertVar :: String -> CythonType -> ContextState annot ()
 insertVar ident typ = do
   ctx <- get
   put (ctx{ localVars = Map.insert ident (Local typ) (localVars ctx) })
@@ -71,7 +72,7 @@ mergeCythonType old new
 mergeVarType :: Var -> Var -> Var
 mergeVarType old new = old{cytype = mergeCythonType (cytype old) (cytype new)}
 
-assignVar :: String -> CythonType -> ContextState Bool
+assignVar :: String -> CythonType -> ContextState annot Bool
 assignVar ident typ = do
   ctx <- get
   let insertIdent f = Map.insertLookupWithKey (const f) ident
@@ -88,38 +89,36 @@ assignVar ident typ = do
   put rctx
   return def
 
-bindGlobalVars' :: Context -> [String] -> ContextState Context
-bindGlobalVars' ctx [] = return ctx
-bindGlobalVars' ctx (ident:tl) = do
+bindGlobalVars' :: annot -> Context -> [String] -> ContextState annot Context
+bindGlobalVars' _ ctx [] = return ctx
+bindGlobalVars' loc ctx (ident:tl) = do
   let lVars = localVars ctx
       local = Map.lookup ident lVars
   if isNothing local
     then do
       let gVars = globalVars ctx
           typ = Map.findWithDefault Unknown ident gVars
-      newCtx <- bindGlobalVars' (ctx{
+      newCtx <- bindGlobalVars' loc (ctx{
         localVars = Map.insert ident (Global typ) lVars
       }) tl
       return newCtx
     else
-      throwE $
-        "Variable " ++ (show ident) ++ " has already been declared or bound"
+      throwE $ errVarAlreadyDeclared loc ident
 
-
-bindGlobalVars :: [String] -> ContextState ()
-bindGlobalVars idents = do
+bindGlobalVars :: annot -> [String] -> ContextState annot ()
+bindGlobalVars loc idents = do
   ctx <- get
   if inGlobalScope ctx
     then
-      throwE $ "Global bindings from the global scope are not allowed"
+      throwE $ errNotAllowedInGlobalScope loc "Global bindings"
     else do
-      newCtx <- bindGlobalVars' ctx idents
+      newCtx <- bindGlobalVars' loc ctx idents
       put newCtx
       return ()
 
-bindNonLocalVars' :: Context -> [String] -> ContextState Context
-bindNonLocalVars' ctx [] = return ctx
-bindNonLocalVars' ctx (ident:tl) = do
+bindNonLocalVars' :: annot -> Context -> [String] -> ContextState annot Context
+bindNonLocalVars' _ ctx [] = return ctx
+bindNonLocalVars' loc ctx (ident:tl) = do
   let lVars = localVars ctx
       local = Map.lookup ident lVars
   if isNothing local
@@ -127,26 +126,24 @@ bindNonLocalVars' ctx (ident:tl) = do
       let outer = Map.lookup ident (outerVars ctx)
       if isNothing outer
         then
-          throwE $ "Variable " ++ (show ident) ++
-            " has not been declared in an outer scope"
+          throwE $ errVarNotFound loc ident
         else do
-          newCtx <- bindNonLocalVars' (ctx{
+          newCtx <- bindNonLocalVars' loc (ctx{
             localVars = Map.insert ident (NonLocal $ fromJust outer) lVars
           }) tl
           return newCtx
     else
-      throwE $
-        "Variable " ++ (show ident) ++ " has already been declared or bound"
+      throwE $ errVarAlreadyDeclared loc ident
 
 
-bindNonLocalVars :: [String] -> ContextState ()
-bindNonLocalVars idents = do
+bindNonLocalVars :: annot -> [String] -> ContextState annot ()
+bindNonLocalVars loc idents = do
   ctx <- get
   if inGlobalScope ctx
     then
-      throwE $ "Nonlocal bindings from the global scope are not allowed"
+      throwE $ errNotAllowedInGlobalScope loc "Nonlocal bindings"
     else do
-      newCtx <- bindNonLocalVars' ctx idents
+      newCtx <- bindNonLocalVars' loc ctx idents
       put newCtx
       return ()
 
@@ -164,7 +161,7 @@ mergeLocalVars ctx =
     localVars = Map.empty
   }
 
-mergeCopiedContext :: Context -> ContextState Context
+mergeCopiedContext :: Context -> ContextState annot Context
 mergeCopiedContext copied = do
   ctx <- get
   let rctx = if inGlobalScope ctx
@@ -184,7 +181,7 @@ mergeCopiedContext copied = do
   put rctx
   return rctx
 
-mergeInnerContext :: Context -> ContextState Context
+mergeInnerContext :: Context -> ContextState annot Context
 mergeInnerContext inner = do
   ctx <- get
   let mergedInner = mergeLocalVars inner
@@ -206,12 +203,12 @@ mergeInnerContext inner = do
   put rctx
   return rctx
 
-copyContext :: ContextState Context
+copyContext :: ContextState annot Context
 copyContext = do
   ctx <- get
   return ctx
 
-openNewContext :: ContextState Context
+openNewContext :: ContextState annot Context
 openNewContext = do
   ctx <- get
   let locals = Map.filter isLocal (localVars ctx)

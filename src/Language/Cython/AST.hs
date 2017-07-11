@@ -11,7 +11,7 @@ import Control.Monad.Trans.Except
 import Language.Cython.Annotation
 import Language.Cython.Context
 
-runState :: ContextState a -> Context -> ContextState (a, Context)
+runState :: ContextState annot a -> Context -> ContextState annot (a, Context)
 runState s c = do
   let (newState, newCtx) = State.runState (runExceptT s) c
   either throwE (\r -> return (r, newCtx)) newState
@@ -21,29 +21,30 @@ initCythonAST = fmap (\s -> (Empty, s))
 
 class Cythonizable t where
   cythonize :: t (Annotation, annot)
-    -> ContextState (t (Annotation, annot))
+    -> ContextState annot (t (Annotation, annot))
   default cythonize :: t (Annotation, annot)
-    -> ContextState (t (Annotation, annot))
+    -> ContextState annot (t (Annotation, annot))
   cythonize node = return node
 
-cythonizeArray :: (Cythonizable c) => [c (Annotation, s)]
-  -> ContextState [c (Annotation, s)]
+cythonizeArray :: (Cythonizable c) => [c (Annotation, annot)]
+  -> ContextState annot [c (Annotation, annot)]
 cythonizeArray [] = return []
 cythonizeArray (hd:tl) = do
   rhd <- cythonize hd
   rtl <- cythonizeArray tl
   return (rhd:rtl)
 
-cythonizeMaybe :: (Cythonizable c) => Maybe (c (Annotation, s))
-  -> ContextState (Maybe (c (Annotation, s)))
+cythonizeMaybe :: (Cythonizable c) => Maybe (c (Annotation, annot))
+  -> ContextState annot (Maybe (c (Annotation, annot)))
 cythonizeMaybe (Just c) = do
   rc <- cythonize c
   return (Just rc)
 cythonizeMaybe Nothing = return Nothing
 
 cythonizeGuards :: (Cythonizable c) =>
-  [(c (Annotation, s), AST.Suite (Annotation, s))]
-  -> ContextState [(c (Annotation, s), AST.Suite (Annotation, s))]
+  [(c (Annotation, annot), AST.Suite (Annotation, annot))]
+  -> ContextState annot
+    [(c (Annotation, annot), AST.Suite (Annotation, annot))]
 cythonizeGuards [] = return []
 cythonizeGuards ((f,s):tl) = do
   ctx <- copyContext
@@ -54,8 +55,9 @@ cythonizeGuards ((f,s):tl) = do
   return ((cf, cs):rtl)
 
 cythonizeContext :: (Cythonizable c) =>
-  [(c (Annotation, s), Maybe (c (Annotation, s)))]
-  -> ContextState [(c (Annotation, s), Maybe (c (Annotation, s)))]
+  [(c (Annotation, annot), Maybe (c (Annotation, annot)))]
+  -> ContextState annot
+    [(c (Annotation, annot), Maybe (c (Annotation, annot)))]
 cythonizeContext [] = return []
 cythonizeContext ((f,s):tl) = do
   cf <- cythonize f
@@ -65,7 +67,7 @@ cythonizeContext ((f,s):tl) = do
 
 instance Cythonizable AST.Ident where
   cythonize (AST.Ident ident (_, annot)) = do
-    typ <- getVarType ident
+    typ <- getVarType annot ident
     return (AST.Ident ident (Type typ, annot))
 
 instance Cythonizable AST.Op
@@ -200,11 +202,11 @@ instance Cythonizable AST.Statement where
     cexpr <- cythonize expr
     return (AST.StmtExpr cexpr annot)
   cythonize (AST.Global vars annot) = do
-    bindGlobalVars (fmap AST.ident_string vars)
+    bindGlobalVars (snd annot) (fmap AST.ident_string vars)
     cvars <- cythonizeArray vars
     return (AST.Global cvars annot)
   cythonize (AST.NonLocal vars annot) = do
-    bindNonLocalVars (fmap AST.ident_string vars)
+    bindNonLocalVars (snd annot) (fmap AST.ident_string vars)
     cvars <- cythonizeArray vars
     return (AST.NonLocal cvars annot)
   cythonize (AST.Assert exprs annot) = do

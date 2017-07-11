@@ -22,4 +22,4 @@ main = do
         let tree = initCythonAST pymodule
             ctx = emptyContext
             results = evalState (runExceptT $ cythonize tree) ctx
-        in either error print results
+        in putStrLn $ either prettyText prettyText results
