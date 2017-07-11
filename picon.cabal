@@ -23,6 +23,7 @@ executable picon
     base >=4.9 && <4.10,
     containers >= 0.5.7.1,
     mtl >= 2.2.1,
+    transformers >= 0.5.2,
     language-python >= 0.5.4
   hs-source-dirs:      src
   default-language:    Haskell2010

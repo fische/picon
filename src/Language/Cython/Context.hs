@@ -3,10 +3,13 @@
 module Language.Cython.Context where
 
 import qualified Data.Map.Strict as Map
+import Control.Monad.State
+import Control.Monad.Trans.Except
 import Data.Maybe (isNothing, maybe)
 import Data.Data
-import Control.Monad.State
 import Language.Cython.Annotation
+
+type ContextState = ExceptT String (State Context)
 
 data Var =
   Local { cytype :: CythonType } |
@@ -43,7 +46,7 @@ emptyContext = Context {
   localVars = Map.empty
 }
 
-getVarType :: String -> State Context CythonType
+getVarType :: String -> ContextState CythonType
 getVarType ident = do
   ctx <- get
   -- TODO Handle default value as exception
@@ -52,7 +55,7 @@ getVarType ident = do
     (Map.findWithDefault Unknown ident (globalVars ctx))
     ident (outerVars ctx)) cytype local)
 
-insertVar :: String -> CythonType -> State Context ()
+insertVar :: String -> CythonType -> ContextState ()
 insertVar ident typ = do
   ctx <- get
   put (ctx{ localVars = Map.insert ident (Local typ) (localVars ctx) })
@@ -69,7 +72,7 @@ mergeCythonType old new
 mergeVarType :: Var -> Var -> Var
 mergeVarType old new = old{cytype = mergeCythonType (cytype old) (cytype new)}
 
-assignVar :: String -> CythonType -> State Context Bool
+assignVar :: String -> CythonType -> ContextState Bool
 assignVar ident typ = do
   ctx <- get
   let insertIdent f = Map.insertLookupWithKey (const f) ident
@@ -101,7 +104,7 @@ bindGlobalVars' ctx (ident:tl) =
   }) tl
 
 
-bindGlobalVars :: [String] -> State Context ()
+bindGlobalVars :: [String] -> ContextState ()
 bindGlobalVars idents = do
   ctx <- get
   put (bindGlobalVars' ctx idents)
@@ -124,7 +127,7 @@ bindNonLocalVars' ctx (ident:tl) =
   in bindNonLocalVars' rctx tl
 
 
-bindNonLocalVars :: [String] -> State Context ()
+bindNonLocalVars :: [String] -> ContextState ()
 bindNonLocalVars idents = do
   ctx <- get
   put (bindNonLocalVars' ctx idents)
@@ -144,7 +147,7 @@ mergeLocalVars ctx =
     localVars = Map.empty
   }
 
-mergeCopiedContext :: Context -> State Context Context
+mergeCopiedContext :: Context -> ContextState Context
 mergeCopiedContext copied = do
   ctx <- get
   let rctx = if inGlobalScope ctx
@@ -164,7 +167,7 @@ mergeCopiedContext copied = do
   put rctx
   return rctx
 
-mergeInnerContext :: Context -> State Context Context
+mergeInnerContext :: Context -> ContextState Context
 mergeInnerContext inner = do
   ctx <- get
   let mergedInner = mergeLocalVars inner
@@ -186,12 +189,12 @@ mergeInnerContext inner = do
   put rctx
   return rctx
 
-copyContext :: State Context Context
+copyContext :: ContextState Context
 copyContext = do
   ctx <- get
   return ctx
 
-openNewContext :: State Context Context
+openNewContext :: ContextState Context
 openNewContext = do
   ctx <- get
   let locals = Map.filter isLocal (localVars ctx)

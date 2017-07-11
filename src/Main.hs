@@ -10,6 +10,7 @@ import Language.Cython.PrettyAST ()
 import Language.Cython.AST
 import Language.Cython.Context
 import Control.Monad.State
+import Control.Monad.Trans.Except
 
 main :: IO ()
 main = do
@@ -20,4 +21,5 @@ main = do
       Right (pymodule, _) ->
         let tree = initCythonAST pymodule
             ctx = emptyContext
-        in print . fst $ runState (cythonize tree) ctx
+            results = evalState (runExceptT $ cythonize tree) ctx
+        in either error print results
