@@ -195,5 +195,5 @@ openNewContext :: State Context Context
 openNewContext = do
   ctx <- get
   let locals = Map.filter isLocal (localVars ctx)
-      outer = Map.union locals (outerVars ctx)
+      outer = Map.union (fmap cytype locals) (outerVars ctx)
   return (ctx{inGlobalScope = False, outerVars = outer, localVars = Map.empty})
