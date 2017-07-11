@@ -49,11 +49,10 @@ emptyContext = Context {
 getVarType :: String -> ContextState CythonType
 getVarType ident = do
   ctx <- get
-  -- TODO Handle default value as exception
-  let local = Map.lookup ident (localVars ctx)
-  return (maybe (Map.findWithDefault
-    (Map.findWithDefault Unknown ident (globalVars ctx))
-    ident (outerVars ctx)) cytype local)
+  let err = "Identifier " ++ ident ++ " was not found"
+      global = maybe (throwE err) return $ Map.lookup ident (globalVars ctx)
+      outer = maybe global return $ Map.lookup ident (outerVars ctx)
+  maybe outer (return . cytype) $ Map.lookup ident (localVars ctx)
 
 insertVar :: String -> CythonType -> ContextState ()
 insertVar ident typ = do
