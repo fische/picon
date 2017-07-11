@@ -5,7 +5,7 @@ module Language.Cython.Context where
 import qualified Data.Map.Strict as Map
 import Control.Monad.State
 import Control.Monad.Trans.Except
-import Data.Maybe (isNothing, maybe)
+import Data.Maybe (isNothing, fromJust, maybe)
 import Data.Data
 import Language.Cython.Annotation
 
@@ -88,49 +88,67 @@ assignVar ident typ = do
   put rctx
   return def
 
-bindGlobalVars' :: Context -> [String] -> Context
-bindGlobalVars' ctx [] = ctx
-bindGlobalVars' ctx (ident:tl) =
-  -- TODO Raise exception when a local var exists
+bindGlobalVars' :: Context -> [String] -> ContextState Context
+bindGlobalVars' ctx [] = return ctx
+bindGlobalVars' ctx (ident:tl) = do
   let lVars = localVars ctx
-      gVars = globalVars ctx
       local = Map.lookup ident lVars
-      glob = Map.findWithDefault Unknown ident gVars
-      dfltTyp = mergeCythonType glob Unknown
-      typ = maybe dfltTyp (mergeCythonType glob . cytype) local
-  in bindGlobalVars' (ctx{
-    localVars = Map.insert ident (Global typ) lVars
-  }) tl
+  if isNothing local
+    then do
+      let gVars = globalVars ctx
+          typ = Map.findWithDefault Unknown ident gVars
+      newCtx <- bindGlobalVars' (ctx{
+        localVars = Map.insert ident (Global typ) lVars
+      }) tl
+      return newCtx
+    else
+      throwE $
+        "Variable " ++ (show ident) ++ " has already been declared or bound"
 
 
 bindGlobalVars :: [String] -> ContextState ()
 bindGlobalVars idents = do
   ctx <- get
-  put (bindGlobalVars' ctx idents)
-  return ()
+  if inGlobalScope ctx
+    then
+      throwE $ "Global bindings from the global scope are not allowed"
+    else do
+      newCtx <- bindGlobalVars' ctx idents
+      put newCtx
+      return ()
 
-bindNonLocalVars' :: Context -> [String] -> Context
-bindNonLocalVars' ctx [] = ctx
-bindNonLocalVars' ctx (ident:tl) =
-  -- TODO Raise exception when var not in outer
-  -- TODO Raise exception when a local var exists
+bindNonLocalVars' :: Context -> [String] -> ContextState Context
+bindNonLocalVars' ctx [] = return ctx
+bindNonLocalVars' ctx (ident:tl) = do
   let lVars = localVars ctx
-      local = Map.findWithDefault (Local Unknown) ident lVars
-      outer = Map.lookup ident (outerVars ctx)
-      rctx = maybe ctx
-        (\outerType -> let typ = mergeCythonType outerType (cytype local)
-          in ctx{
-            localVars = Map.insert ident (NonLocal typ) lVars
-          })
-        outer
-  in bindNonLocalVars' rctx tl
+      local = Map.lookup ident lVars
+  if isNothing local
+    then do
+      let outer = Map.lookup ident (outerVars ctx)
+      if isNothing outer
+        then
+          throwE $ "Variable " ++ (show ident) ++
+            " has not been declared in an outer scope"
+        else do
+          newCtx <- bindNonLocalVars' (ctx{
+            localVars = Map.insert ident (NonLocal $ fromJust outer) lVars
+          }) tl
+          return newCtx
+    else
+      throwE $
+        "Variable " ++ (show ident) ++ " has already been declared or bound"
 
 
 bindNonLocalVars :: [String] -> ContextState ()
 bindNonLocalVars idents = do
   ctx <- get
-  put (bindNonLocalVars' ctx idents)
-  return ()
+  if inGlobalScope ctx
+    then
+      throwE $ "Nonlocal bindings from the global scope are not allowed"
+    else do
+      newCtx <- bindNonLocalVars' ctx idents
+      put newCtx
+      return ()
 
 mergeLocalVars :: Context -> Context
 mergeLocalVars ctx =
