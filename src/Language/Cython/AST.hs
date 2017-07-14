@@ -1,114 +1,63 @@
-{-# LANGUAGE DeriveDataTypeable, DefaultSignatures #-}
+{-# LANGUAGE DefaultSignatures #-}
 
-module Language.Cython.AST where
+module Language.Cython.AST (
+  Cythonizable(..),
+  initCythonAST
+) where
 
 import qualified Language.Python.Common.AST as AST
-import qualified Data.Map.Strict as Map
-import Data.Maybe (isNothing, isJust, fromJust)
-import Control.Monad.State
-import Data.Data
+import qualified Control.Monad.State as State
+import Control.Monad.Trans.Except
+import Language.Cython.Annotation
+import Language.Cython.Context
 
-data CBasicType =
-  Char |
-  Short |
-  Int |
-  Long |
-  LongLong |
-  Float |
-  Double
-  deriving (Eq,Ord,Show,Typeable,Data)
-
-data CType =
-  Void |
-  BInt |
-  Signed CBasicType |
-  Unsigned CBasicType |
-  Ptr CType
-  deriving (Eq,Ord,Show,Typeable,Data)
-
-data CythonType =
-  Unknown |
-  CType CType |
-  String |
-  Bytes |
-  Unicode |
-  PythonObject
-  deriving (Eq,Ord,Show,Typeable,Data)
-
-data Annotation =
-  CDef Bool |
-  Type CythonType |
-  Empty
-  deriving (Eq,Ord,Show,Typeable,Data)
-
-getAnnotationType :: Annotation -> CythonType
-getAnnotationType (Type typ) = typ
-getAnnotationType _ = Unknown
+runState :: ContextState annot a -> Context -> ContextState annot (a, Context)
+runState s c = do
+  let (newState, newCtx) = State.runState (runExceptT s) c
+  either throwE (\r -> return (r, newCtx)) newState
 
 initCythonAST :: (Functor f) => f annot -> f (Annotation, annot)
 initCythonAST = fmap (\s -> (Empty, s))
 
-data Context =
-  Context {
-    scope :: Map.Map String CythonType
-  }
-  deriving (Eq,Ord,Show,Typeable,Data)
-
-emptyContext :: Context
-emptyContext = Context { scope = Map.empty }
-
-getIdentType :: Context -> String -> CythonType
-getIdentType ctx ident
-  | isJust typ = fromJust typ
-  | otherwise = Unknown
-  where typ = Map.lookup ident (scope ctx)
-
-replaceIdent :: Context -> String -> CythonType -> Context
-replaceIdent ctx ident typ =
-  ctx { scope = Map.insert ident typ (scope ctx) }
-
--- TODO Compare CTypes, change if needed and return it
-assignIdent :: Context -> String -> CythonType -> (Context, Bool)
-assignIdent ctx ident typ =
-  let (old, newscope) =
-        Map.insertLookupWithKey (\_ _ new -> new) ident typ (scope ctx)
-  in (ctx { scope = newscope }, isNothing old)
-
 class Cythonizable t where
   cythonize :: t (Annotation, annot)
-    -> State Context (t (Annotation, annot))
+    -> ContextState annot (t (Annotation, annot))
   default cythonize :: t (Annotation, annot)
-    -> State Context (t (Annotation, annot))
+    -> ContextState annot (t (Annotation, annot))
   cythonize node = return node
 
-cythonizeArray :: (Cythonizable c) => [c (Annotation, s)]
-  -> State Context [c (Annotation, s)]
+cythonizeArray :: (Cythonizable c) => [c (Annotation, annot)]
+  -> ContextState annot [c (Annotation, annot)]
 cythonizeArray [] = return []
 cythonizeArray (hd:tl) = do
   rhd <- cythonize hd
   rtl <- cythonizeArray tl
   return (rhd:rtl)
 
-cythonizeMaybe :: (Cythonizable c) => Maybe (c (Annotation, s))
-  -> State Context (Maybe (c (Annotation, s)))
+cythonizeMaybe :: (Cythonizable c) => Maybe (c (Annotation, annot))
+  -> ContextState annot (Maybe (c (Annotation, annot)))
 cythonizeMaybe (Just c) = do
   rc <- cythonize c
   return (Just rc)
 cythonizeMaybe Nothing = return Nothing
 
 cythonizeGuards :: (Cythonizable c) =>
-  [(c (Annotation, s), AST.Suite (Annotation, s))]
-  -> State Context [(c (Annotation, s), AST.Suite (Annotation, s))]
+  [(c (Annotation, annot), AST.Suite (Annotation, annot))]
+  -> ContextState annot
+    [(c (Annotation, annot), AST.Suite (Annotation, annot))]
 cythonizeGuards [] = return []
 cythonizeGuards ((f,s):tl) = do
-  cf <- cythonize f
-  cs <- cythonizeArray s
+  ctx <- copyContext
+  (cf, tmpctx1) <- runState (cythonize f) ctx
+  (cs, rctx) <- runState (cythonizeArray s) tmpctx1
+  _ <- mergeCopiedContext rctx
   rtl <- cythonizeGuards tl
   return ((cf, cs):rtl)
 
 cythonizeContext :: (Cythonizable c) =>
-  [(c (Annotation, s), Maybe (c (Annotation, s)))]
-  -> State Context [(c (Annotation, s), Maybe (c (Annotation, s)))]
+  [(c (Annotation, annot), Maybe (c (Annotation, annot)))]
+  -> ContextState annot
+    [(c (Annotation, annot), Maybe (c (Annotation, annot)))]
 cythonizeContext [] = return []
 cythonizeContext ((f,s):tl) = do
   cf <- cythonize f
@@ -118,8 +67,8 @@ cythonizeContext ((f,s):tl) = do
 
 instance Cythonizable AST.Ident where
   cythonize (AST.Ident ident (_, annot)) = do
-    ctx <- get
-    return (AST.Ident ident (Type (getIdentType ctx ident), annot))
+    typ <- getVarType annot ident
+    return (AST.Ident ident (Type typ, annot))
 
 instance Cythonizable AST.Op
 
@@ -127,7 +76,9 @@ instance Cythonizable AST.AssignOp
 
 instance Cythonizable AST.Module where
   cythonize (AST.Module stmts) = do
-    rstmts <- cythonizeArray stmts
+    ctx <- copyContext
+    let rctx = ctx{inGlobalScope = True}
+    (rstmts, _) <- runState (cythonizeArray stmts) rctx
     return (AST.Module(rstmts))
 
 instance Cythonizable AST.ImportItem where
@@ -166,39 +117,48 @@ instance Cythonizable AST.Statement where
     return (AST.FromImport cm citems annot)
   cythonize (AST.While cond body e annot) = do
     ccond <- cythonize cond
-    cbody <- cythonizeArray body
-    celse <- cythonizeArray e
+    ctx <- copyContext
+    (cbody, tmpctx1) <- runState (cythonizeArray body) ctx
+    tmpctx2 <- mergeCopiedContext tmpctx1
+    (celse, rctx) <- runState (cythonizeArray e) tmpctx2
+    _ <- mergeCopiedContext rctx
     return (AST.While ccond cbody celse annot)
   cythonize (AST.For targets gen body e annot) = do
     ctargets <- cythonizeArray targets
     cgen <- cythonize gen
-    cbody <- cythonizeArray body
-    celse <- cythonizeArray e
+    ctx <- copyContext
+    (cbody, tmpctx1) <- runState (cythonizeArray body) ctx
+    tmpctx2 <- mergeCopiedContext tmpctx1
+    (celse, rctx) <- runState (cythonizeArray e) tmpctx2
+    _ <- mergeCopiedContext rctx
     return (AST.For ctargets cgen cbody celse annot)
   cythonize (AST.Fun name args result body annot) = do
     cname <- cythonize name
-    cargs <- cythonizeArray args
-    cbody <- cythonizeArray body
+    ctx <- openNewContext
+    (cargs, argsctx) <- runState (cythonizeArray args) ctx
+    (cbody, rctx) <- runState (cythonizeArray body) argsctx
+    _ <- mergeInnerContext rctx
     return (AST.Fun cname cargs result cbody annot)
   cythonize (AST.Class name args body annot) = do
     cname <- cythonize name
-    cargs <- cythonizeArray args
-    cbody <- cythonizeArray body
+    ctx <- openNewContext
+    (cargs, argsctx) <- runState (cythonizeArray args) ctx
+    (cbody, rctx) <- runState (cythonizeArray body) argsctx
+    _ <- mergeInnerContext rctx
     return (AST.Class cname cargs cbody annot)
   cythonize (AST.Conditional guards e annot) = do
     cguards <- cythonizeGuards guards
-    celse <- cythonizeArray e
+    ctx <- copyContext
+    (celse, rctx) <- runState (cythonizeArray e) ctx
+    _ <- mergeCopiedContext rctx
     return (AST.Conditional cguards celse annot)
   cythonize (AST.Assign [to@AST.Var{}] expr (_, annot)) = do
     cexpr <- cythonize expr
-    ctx <- get
     let ident = AST.ident_string $ AST.var_ident to
         typ = getAnnotationType . fst $ AST.annot cexpr
-        (rctx, rdef) = assignIdent ctx ident typ
-        cannot = CDef rdef
-    put rctx
+    rdef <- assignVar ident typ
     cto <- cythonize to
-    return (AST.Assign [cto] cexpr (cannot, annot))
+    return (AST.Assign [cto] cexpr (CDef rdef, annot))
   cythonize (AST.Assign tos expr annot) = do
     cexpr <- cythonize expr
     ctos <- cythonizeArray tos
@@ -216,10 +176,14 @@ instance Cythonizable AST.Statement where
     cexpr <- cythonizeMaybe expr
     return (AST.Return cexpr annot)
   cythonize (AST.Try body excepts e fin annot) = do
-    cbody <- cythonizeArray body
+    ctx <- copyContext
+    (cbody, tmpctx1) <- runState (cythonizeArray body) ctx
+    tmpctx2 <- mergeCopiedContext tmpctx1
     cexcepts <- cythonizeArray excepts
-    celse <- cythonizeArray e
-    cfin <- cythonizeArray fin
+    (celse, tmpctx3) <- runState (cythonizeArray e) tmpctx2
+    tmpctx4 <- mergeCopiedContext tmpctx3
+    (cfin, rctx) <- runState (cythonizeArray fin) tmpctx4
+    _ <- mergeCopiedContext rctx
     return (AST.Try cbody cexcepts celse cfin annot)
   cythonize (AST.Raise expr annot) = do
     cexpr <- cythonize expr
@@ -238,9 +202,11 @@ instance Cythonizable AST.Statement where
     cexpr <- cythonize expr
     return (AST.StmtExpr cexpr annot)
   cythonize (AST.Global vars annot) = do
+    bindGlobalVars (snd annot) (fmap AST.ident_string vars)
     cvars <- cythonizeArray vars
     return (AST.Global cvars annot)
   cythonize (AST.NonLocal vars annot) = do
+    bindNonLocalVars (snd annot) (fmap AST.ident_string vars)
     cvars <- cythonizeArray vars
     return (AST.NonLocal cvars annot)
   cythonize (AST.Assert exprs annot) = do
@@ -298,8 +264,7 @@ instance Cythonizable AST.Parameter where
         typ = case cdflt of
                 Nothing -> Unknown
                 Just expr -> getAnnotationType . fst $ AST.annot expr
-    ctx <- get
-    put $ replaceIdent ctx ident typ
+    insertVar ident typ
     cname <- cythonize name
     return (AST.Param cname py_annot cdflt (Type typ, annot))
   cythonize (AST.VarArgsPos name py_annot annot) = do
@@ -339,8 +304,11 @@ instance Cythonizable AST.Argument where
 
 instance Cythonizable AST.Handler where
   cythonize (AST.Handler clause suite annot) = do
-    cclause <- cythonize clause
-    csuite <- cythonizeArray suite
+    ctx <- copyContext
+    (cclause, tmpctx1) <- runState (cythonize clause) ctx
+    tmpctx2 <- mergeCopiedContext tmpctx1
+    (csuite, rctx) <- runState (cythonizeArray suite) tmpctx2
+    _ <- mergeCopiedContext rctx
     return (AST.Handler cclause csuite annot)
 
 instance Cythonizable AST.ExceptClause where

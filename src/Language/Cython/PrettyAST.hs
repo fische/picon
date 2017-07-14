@@ -2,7 +2,7 @@
 
 module Language.Cython.PrettyAST where
 
-import Language.Cython.AST
+import Language.Cython.Annotation
 import Language.Python.Common.Pretty
 import Language.Python.Common.PrettyAST ()
 import qualified Language.Python.Common.AST as AST
