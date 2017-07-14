@@ -152,6 +152,7 @@ instance Cythonizable AST.Statement where
     (celse, rctx) <- runState (cythonizeArray e) ctx
     _ <- mergeCopiedContext rctx
     return (AST.Conditional cguards celse annot)
+  -- TODO Handle when assign_to is an array with multiple elements
   cythonize (AST.Assign [to@AST.Var{}] expr (_, annot)) = do
     cexpr <- cythonize expr
     let ident = AST.ident_string $ AST.var_ident to
