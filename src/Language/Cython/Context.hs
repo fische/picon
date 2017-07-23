@@ -241,7 +241,7 @@ merge innerCtx = do
     globalVars = newGlobals
   }
 
-mergeCopy :: Context -> ContextState annot Type
+mergeCopy :: Context -> ContextState annot (Map.Map String [Type])
 mergeCopy innerCtx = do
   currCtx <- get
   let resolveScope currScope innerScope =
@@ -264,15 +264,15 @@ mergeCopy innerCtx = do
             localVars = u
           }, r))
   merge ctx
-  return . Locals . fmap cytype $ Map.filter isLocal resolved
+  return . fmap cytype $ Map.filter isLocal resolved
 
-mergeScope :: Context -> ContextState annot Type
+mergeScope :: Context -> ContextState annot (Map.Map String [Type])
 mergeScope innerCtx = do
   let resolved = resolve (localVars innerCtx) (localVars innerCtx)
   merge innerCtx{
     localVars = resolved
   }
-  return . Locals . fmap cytype $ Map.filter isLocal resolved
+  return . fmap cytype $ Map.filter isLocal resolved
 
 mapWithKey' :: (Monad m) => (k -> a -> m b) -> [(k, a)] -> m [(k, b)]
 mapWithKey' _ [] = return []
