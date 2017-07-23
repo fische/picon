@@ -2,41 +2,19 @@
 
 module Language.Cython.Annotation where
 
+import qualified Data.Map.Strict as Map
 import Data.Data
 
-data CBasicType =
-  Char |
-  Short |
-  Int |
-  Long |
-  LongLong |
-  Float |
-  Double
+import qualified Language.Python.Common.AST as AST
+import Language.Cython.Type
+
+data Type =
+  Locals (Map.Map String [Type]) |
+  Const CythonType |
+  Ref String |
+  None
   deriving (Eq,Ord,Show,Typeable,Data)
 
-data CType =
-  Void |
-  BInt |
-  Signed CBasicType |
-  Unsigned CBasicType |
-  Ptr CType
-  deriving (Eq,Ord,Show,Typeable,Data)
-
-data CythonType =
-  Unknown |
-  CType CType |
-  String |
-  Bytes |
-  Unicode |
-  PythonObject
-  deriving (Eq,Ord,Show,Typeable,Data)
-
-data Annotation =
-  CDef Bool |
-  Type CythonType |
-  Empty
-  deriving (Eq,Ord,Show,Typeable,Data)
-
-getAnnotationType :: Annotation -> CythonType
-getAnnotationType (Type typ) = typ
-getAnnotationType _ = Unknown
+getType :: (AST.Annotated a) =>
+  a (Type, annot) -> Type
+getType a = fst $ AST.annot a
