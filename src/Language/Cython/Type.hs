@@ -2,7 +2,6 @@
 
 module Language.Cython.Type where
 
-import qualified Data.Map.Strict as Map
 import Data.Data
 
 data CBasicType =
@@ -29,9 +28,5 @@ data CythonType =
   String |
   Bytes |
   Unicode |
-  PythonObject |
-  Function {
-    returnType :: CythonType,
-    paramTypes :: Map.Map (Int, String) CythonType
-  }
+  PythonObject
   deriving (Eq,Ord,Show,Typeable,Data)
