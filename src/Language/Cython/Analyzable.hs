@@ -49,11 +49,13 @@ analyzeGuards :: (Analyzable t c) =>
   ContextState SrcSpan [(c (Type, SrcSpan), Suite (Type, SrcSpan))]
 analyzeGuards [] = return []
 analyzeGuards ((f,s):tl) = do
+  cf <- analyze f
   ctx <- copy
-  (cf, tmpctx1) <- runState (analyze f) ctx
-  (cs, _) <- runState (analyzeSuite s) tmpctx1
+  (cs, suiteCtx) <- runState (analyzeSuite s) ctx
+  suiteLocals <- mergeCopy suiteCtx
+  let suiteAnnot = (Locals suiteLocals, snd $ AST.annot cs)
   rtl <- analyzeGuards tl
-  return ((cf, cs):rtl)
+  return ((cf, cs{suite_annot = suiteAnnot}):rtl)
 
 analyzeContext :: (Analyzable t c) =>
   [(t (Type, SrcSpan), Maybe (t (Type, SrcSpan)))] ->
@@ -77,8 +79,10 @@ instance Analyzable AST.AssignOp AST.AssignOp where
 instance Analyzable AST.Module Module where
   analyze (AST.Module stmts) = do
     ctx <- openModule
-    (rstmts, _) <- runState (analyzeSuite stmts) ctx
-    return (Module rstmts (None, SpanEmpty))
+    (rstmts, stmtsCtx) <- runState (analyzeSuite stmts) ctx
+    stmtsLocals <- mergeModule stmtsCtx
+    let stmtsAnnot = (Locals stmtsLocals, snd $ AST.annot rstmts)
+    return (Module rstmts{suite_annot = stmtsAnnot} (None, SpanEmpty))
 
 instance Analyzable AST.ImportItem AST.ImportItem where
   analyze (AST.ImportItem item as annot) = do
@@ -117,33 +121,49 @@ instance Analyzable AST.Statement Statement where
   analyze (AST.While cond body e annot) = do
     ccond <- analyze cond
     ctx <- copy
-    (cbody, _) <- runState (analyzeSuite body) ctx
-    (celse, _) <- runState (analyzeSuite e) ctx
-    return (While ccond cbody celse annot)
+    (cbody, bodyCtx) <- runState (analyzeSuite body) ctx
+    bodyLocals <- mergeCopy bodyCtx
+    (celse, elseCtx) <- runState (analyzeSuite e) ctx
+    elseLocals <- mergeCopy elseCtx
+    let bodyAnnot = (Locals bodyLocals, snd $ AST.annot cbody)
+        elseAnnot = (Locals elseLocals, snd $ AST.annot celse)
+    return (While ccond cbody{suite_annot = bodyAnnot}
+      celse{suite_annot = elseAnnot} annot)
   analyze (AST.For targets gen body e annot) = do
     ctargets <- analyzeArray targets
     cgen <- analyze gen
     ctx <- copy
-    (cbody, _) <- runState (analyzeSuite body) ctx
-    (celse, _) <- runState (analyzeSuite e) ctx
-    return (For ctargets cgen cbody celse annot)
+    (cbody, bodyCtx) <- runState (analyzeSuite body) ctx
+    bodyLocals <- mergeCopy bodyCtx
+    (celse, elseCtx) <- runState (analyzeSuite e) ctx
+    elseLocals <- mergeCopy elseCtx
+    let bodyAnnot = (Locals bodyLocals, snd $ AST.annot cbody)
+        elseAnnot = (Locals elseLocals, snd $ AST.annot celse)
+    return (For ctargets cgen cbody{suite_annot = bodyAnnot}
+      celse{suite_annot = elseAnnot} annot)
   analyze (AST.Fun name args result body annot) = do
     cname <- analyze name
     ctx <- openScope
     (cargs, argsctx) <- runState (analyzeArray args) ctx
-    (cbody, _) <- runState (analyzeSuite body) argsctx
-    return (Fun cname cargs result cbody annot)
+    (cbody, bodyCtx) <- runState (analyzeSuite body) argsctx
+    bodyLocals <- mergeScope bodyCtx
+    let bodyAnnot = (Locals bodyLocals, snd $ AST.annot cbody)
+    return (Fun cname cargs result cbody{suite_annot = bodyAnnot} annot)
   analyze (AST.Class name args body annot) = do
     cname <- analyze name
-    ctx <- copy
+    ctx <- openScope
     (cargs, argsctx) <- runState (analyzeArray args) ctx
-    (cbody, _) <- runState (analyzeSuite body) argsctx
-    return (Class cname cargs cbody annot)
+    (cbody, bodyCtx) <- runState (analyzeSuite body) argsctx
+    bodyLocals <- mergeScope bodyCtx
+    let bodyAnnot = (Locals bodyLocals, snd $ AST.annot cbody)
+    return (Class cname cargs cbody{suite_annot = bodyAnnot} annot)
   analyze (AST.Conditional guards e annot) = do
     cguards <- analyzeGuards guards
     ctx <- copy
-    (celse, _) <- runState (analyzeSuite e) ctx
-    return (Conditional cguards celse annot)
+    (celse, elseCtx) <- runState (analyzeSuite e) ctx
+    elseLocals <- mergeCopy elseCtx
+    let elseAnnot = (Locals elseLocals, snd $ AST.annot celse)
+    return (Conditional cguards celse{suite_annot = elseAnnot} annot)
   -- TODO Handle when assign_to is an array with multiple elements
   analyze (AST.Assign [to@AST.Var{}] expr annot) = do
     cexpr <- analyze expr
@@ -170,18 +190,28 @@ instance Analyzable AST.Statement Statement where
     return (Statement $ AST.Return cexpr annot)
   analyze (AST.Try body excepts e fin annot) = do
     ctx <- copy
-    (cbody, _) <- runState (analyzeSuite body) ctx
+    (cbody, bodyCtx) <- runState (analyzeSuite body) ctx
+    bodyLocals <- mergeCopy bodyCtx
     cexcepts <- analyzeArray excepts
-    (celse, _) <- runState (analyzeSuite e) ctx
-    (cfin, _) <- runState (analyzeSuite fin) ctx
-    return (Try cbody cexcepts celse cfin annot)
+    (celse, elseCtx) <- runState (analyzeSuite e) ctx
+    elseLocals <- mergeCopy elseCtx
+    (cfin, finCtx) <- runState (analyzeSuite fin) ctx
+    finLocals <- mergeCopy finCtx
+    let bodyAnnot = (Locals bodyLocals, snd $ AST.annot cbody)
+        elseAnnot = (Locals elseLocals, snd $ AST.annot celse)
+        finAnnot = (Locals finLocals, snd $ AST.annot cfin)
+    return (Try cbody{suite_annot = bodyAnnot} cexcepts
+      celse{suite_annot = elseAnnot} cfin{suite_annot = finAnnot} annot)
   analyze (AST.Raise expr annot) = do
     cexpr <- analyze expr
     return (Statement $ AST.Raise cexpr annot)
   analyze (AST.With wctx body annot) = do
     cwctx <- analyzeContext wctx
-    cbody <- analyzeSuite body
-    return (With cwctx cbody annot)
+    ctx <- copy
+    (cbody, bodyCtx) <- runState (analyzeSuite body) ctx
+    bodyLocals <- mergeCopy bodyCtx
+    let bodyAnnot = (Locals bodyLocals, snd $ AST.annot cbody)
+    return (With cwctx cbody{suite_annot = bodyAnnot} annot)
   analyze (AST.Pass annot) = return (Statement $ AST.Pass annot)
   analyze (AST.Break annot) = return (Statement $ AST.Break annot)
   analyze (AST.Continue annot) = return (Statement $ AST.Continue annot)
@@ -289,10 +319,12 @@ instance Analyzable AST.Argument AST.Argument where
 
 instance Analyzable AST.Handler Handler where
   analyze (AST.Handler clause suite annot) = do
+    cclause <- analyze clause
     ctx <- copy
-    (cclause, _) <- runState (analyze clause) ctx
-    (csuite, _) <- runState (analyzeSuite suite) ctx
-    return (Handler cclause csuite annot)
+    (csuite, suiteCtx) <- runState (analyzeSuite suite) ctx
+    suiteLocals <- mergeCopy suiteCtx
+    let suiteAnnot = (Locals suiteLocals, snd $ AST.annot csuite)
+    return (Handler cclause csuite{suite_annot = suiteAnnot} annot)
 
 instance Analyzable AST.ExceptClause AST.ExceptClause where
   analyze (AST.ExceptClause (Just (expr1, Just expr2)) annot) = do
