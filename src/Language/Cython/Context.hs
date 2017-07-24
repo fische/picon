@@ -172,7 +172,7 @@ bindNonLocalVars loc idents = do
 
 updateLocalBindings :: Context -> Context
 updateLocalBindings ctx =
-  let (locals, bound) = Map.partition (not . isLocal) (localVars ctx)
+  let (locals, bound) = Map.partition isLocal (localVars ctx)
       (globals, outers) = Map.partition isGlobal bound
       mergeBinding old new = old{ cytype = new }
       newBoundGlobals =
@@ -181,6 +181,27 @@ updateLocalBindings ctx =
         Map.intersectionWith mergeBinding outers (outerVars ctx)
   in ctx{
     localVars = Map.unions [locals, newBoundGlobals, newBoundOuters]
+  }
+
+merge :: Map.Map String Binding -> Context -> ContextState annot ()
+merge toMerge innerCtx = do
+  currCtx <- get
+  let innerBound = Map.filter (not . isLocal) toMerge
+      (innerBoundGlobals, innerBoundOuters) = Map.partition isGlobal innerBound
+      innerOuters =
+        Map.union (fmap cytype innerBoundOuters) (outerVars innerCtx)
+
+      currLocals = Map.filter isLocal (localVars currCtx)
+      nonLocalOuters = Map.difference innerOuters currLocals
+
+      newGlobals =
+        Map.union (fmap cytype innerBoundGlobals) (globalVars innerCtx)
+      newOuters =
+        Map.union nonLocalOuters (outerVars currCtx)
+
+  put $ updateLocalBindings currCtx{
+    outerVars = newOuters,
+    globalVars = newGlobals
   }
 
 -- TODO Handle cycling referencing
@@ -219,28 +240,6 @@ resolve toResolve scope =
         return v{ cytype = resolved }
   in evalState (mapWithKey resolveBinding scope) Map.empty
 
-merge :: Context -> ContextState annot ()
-merge innerCtx = do
-  currCtx <- get
-  -- TODO Return innerLocals as annotation
-  let innerBound = Map.filter (not . isLocal) (localVars innerCtx)
-      (innerBoundGlobals, innerBoundOuters) = Map.partition isGlobal innerBound
-      innerOuters =
-        Map.union (fmap cytype innerBoundOuters) (outerVars innerCtx)
-
-      currLocals = Map.filter isLocal (localVars currCtx)
-      nonLocalOuters = Map.difference innerOuters currLocals
-
-      newGlobals =
-        Map.union (fmap cytype innerBoundGlobals) (globalVars innerCtx)
-      newOuters =
-        Map.union nonLocalOuters (outerVars currCtx)
-
-  put $ updateLocalBindings currCtx{
-    outerVars = newOuters,
-    globalVars = newGlobals
-  }
-
 mergeCopy :: Context -> ContextState annot (Map.Map String [Type])
 mergeCopy innerCtx = do
   currCtx <- get
@@ -250,29 +249,37 @@ mergeCopy innerCtx = do
               Map.partitionWithKey inCurrCtx innerScope
             resolvedLocals = resolve locals locals
             resolvedOuters = resolve resolvedLocals outers
-        in (Map.union resolvedLocals resolvedOuters, resolvedLocals)
-      (ctx, resolved) = (if inGlobalScope innerCtx
-        then
-          let (u, r) = resolveScope (globalVars currCtx)
-                (Local <$> globalVars innerCtx)
-          in (innerCtx{
-            globalVars = cytype <$> u
-          }, r)
-        else
-          let (u, r) = resolveScope (localVars currCtx) (localVars innerCtx)
-          in (innerCtx{
-            localVars = u
-          }, r))
-  merge ctx
+        in (resolvedLocals, resolvedOuters)
+  resolved <- (if inGlobalScope innerCtx
+                then do
+                  let (locals, outers) = resolveScope (globalVars currCtx)
+                        (Local <$> globalVars innerCtx)
+                  put currCtx{
+                    globalVars = cytype <$> outers
+                  }
+                  return locals
+                else do
+                  let (locals, outers) = resolveScope (localVars currCtx)
+                        (localVars innerCtx)
+                  merge locals innerCtx{
+                    localVars = Map.union locals outers
+                  }
+                  return locals)
   return . fmap cytype $ Map.filter isLocal resolved
 
 mergeScope :: Context -> ContextState annot (Map.Map String [Type])
 mergeScope innerCtx = do
   let resolved = resolve (localVars innerCtx) (localVars innerCtx)
-  merge innerCtx{
+  merge resolved innerCtx{
     localVars = resolved
   }
   return . fmap cytype $ Map.filter isLocal resolved
+
+mergeModule :: Context -> ContextState annot (Map.Map String [Type])
+mergeModule innerCtx =
+  let globals = Local <$> globalVars innerCtx
+      resolved = resolve globals globals
+  in return . fmap cytype $ Map.filter isLocal resolved
 
 mapWithKey' :: (Monad m) => (k -> a -> m b) -> [(k, a)] -> m [(k, b)]
 mapWithKey' _ [] = return []
