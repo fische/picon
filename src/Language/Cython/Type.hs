@@ -23,7 +23,6 @@ data CType =
   deriving (Eq,Ord,Show,Typeable,Data)
 
 data CythonType =
-  Unknown |
   CType CType |
   String |
   Bytes |

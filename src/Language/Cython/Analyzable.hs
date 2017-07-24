@@ -2,6 +2,7 @@
 
 module Language.Cython.Analyzable (
   Analyzable(..),
+  Context,
   empty
 ) where
 
@@ -24,8 +25,8 @@ type State annot = ContextState Context annot
 data Context =
   Context {
     inGlobalScope :: Bool,
-    globalVars :: Map.Map String [Type],
-    outerVars :: Map.Map String [Type],
+    globalVars :: Map.Map String [TypeAnnotation],
+    outerVars :: Map.Map String [TypeAnnotation],
     localVars :: Map.Map String Binding
   }
   deriving (Eq,Ord,Show,Typeable,Data)
@@ -66,7 +67,7 @@ openModule = do
     localVars = Map.empty
   })
 
-addVarType :: String -> Type -> State annot ()
+addVarType :: String -> TypeAnnotation -> State annot ()
 addVarType ident annot = do
   ctx <- get
   let insert _ old = (annot : old)
@@ -194,7 +195,7 @@ merge toMerge innerCtx = do
     globalVars = newGlobals
   }
 
-mergeCopy :: Context -> State annot (Map.Map String [Type])
+mergeCopy :: Context -> State annot (Map.Map String [TypeAnnotation])
 mergeCopy innerCtx = do
   currCtx <- get
   let resolveScope currScope innerScope =
@@ -221,7 +222,7 @@ mergeCopy innerCtx = do
                   return locals)
   return . fmap cytype $ Map.filter isLocal resolved
 
-mergeScope :: Context -> State annot (Map.Map String [Type])
+mergeScope :: Context -> State annot (Map.Map String [TypeAnnotation])
 mergeScope innerCtx = do
   let resolved = resolve (localVars innerCtx) (localVars innerCtx)
   merge resolved innerCtx{
@@ -229,7 +230,7 @@ mergeScope innerCtx = do
   }
   return . fmap cytype $ Map.filter isLocal resolved
 
-mergeModule :: Context -> State annot (Map.Map String [Type])
+mergeModule :: Context -> State annot (Map.Map String [TypeAnnotation])
 mergeModule innerCtx =
   let globals = Local <$> globalVars innerCtx
       resolved = resolve globals globals
@@ -238,45 +239,53 @@ mergeModule innerCtx =
 
 
 class Analyzable t c where
-  analyze :: t (Type, SrcSpan) -> State SrcSpan (c (Type, SrcSpan))
+  analyze :: t (Maybe CythonAnnotation, SrcSpan) ->
+    State SrcSpan (c (Maybe CythonAnnotation, SrcSpan))
 
-analyzeArray :: (Analyzable t c) => [t (Type, SrcSpan)] ->
-  State SrcSpan [c (Type, SrcSpan)]
+analyzeArray :: (Analyzable t c) => [t (Maybe CythonAnnotation, SrcSpan)] ->
+  State SrcSpan [c (Maybe CythonAnnotation, SrcSpan)]
 analyzeArray [] = return []
 analyzeArray (hd:tl) = do
   rhd <- analyze hd
   rtl <- analyzeArray tl
   return (rhd:rtl)
 
-analyzeSuite :: [AST.Statement (Type, SrcSpan)] ->
-  State SrcSpan (Suite (Type, SrcSpan))
+analyzeSuite :: [AST.Statement (Maybe CythonAnnotation, SrcSpan)] ->
+  State SrcSpan (Suite (Maybe CythonAnnotation, SrcSpan))
 analyzeSuite s = do
   arr <- analyzeArray s
-  return (Suite arr (None, SpanEmpty))
+  return (Suite arr (Nothing, SpanEmpty))
 
-analyzeMaybe :: (Analyzable t c) => Maybe (t (Type, SrcSpan)) ->
-  State SrcSpan (Maybe (c (Type, SrcSpan)))
+analyzeMaybe :: (Analyzable t c) =>
+  Maybe (t (Maybe CythonAnnotation, SrcSpan)) ->
+  State SrcSpan (Maybe (c (Maybe CythonAnnotation, SrcSpan)))
 analyzeMaybe (Just m) = do
   r <- analyze m
   return (Just r)
 analyzeMaybe Nothing = return Nothing
 
 analyzeGuards :: (Analyzable t c) =>
-  [(t (Type, SrcSpan), AST.Suite (Type, SrcSpan))] ->
-  State SrcSpan [(c (Type, SrcSpan), Suite (Type, SrcSpan))]
+  [(t (Maybe CythonAnnotation, SrcSpan),
+    AST.Suite (Maybe CythonAnnotation, SrcSpan))] ->
+  State SrcSpan
+    [(c (Maybe CythonAnnotation, SrcSpan),
+      Suite (Maybe CythonAnnotation, SrcSpan))]
 analyzeGuards [] = return []
 analyzeGuards ((f,s):tl) = do
   cf <- analyze f
   ctx <- copy
   (cs, suiteCtx) <- runState (analyzeSuite s) ctx
   suiteLocals <- mergeCopy suiteCtx
-  let suiteAnnot = (Locals suiteLocals, snd $ AST.annot cs)
+  let suiteAnnot = (Just $ Locals suiteLocals, snd $ AST.annot cs)
   rtl <- analyzeGuards tl
   return ((cf, cs{suite_annot = suiteAnnot}):rtl)
 
-analyzeContext :: (Analyzable t c) =>
-  [(t (Type, SrcSpan), Maybe (t (Type, SrcSpan)))] ->
-  State SrcSpan [(c (Type, SrcSpan), Maybe (c (Type, SrcSpan)))]
+type PythonContext t =
+  (t (Maybe CythonAnnotation, SrcSpan),
+    Maybe (t (Maybe CythonAnnotation, SrcSpan)))
+
+analyzeContext :: (Analyzable t c) => [(PythonContext t)] ->
+  State SrcSpan [(PythonContext c)]
 analyzeContext [] = return []
 analyzeContext ((f,s):tl) = do
   cf <- analyze f
@@ -298,8 +307,8 @@ instance Analyzable AST.Module Module where
     ctx <- openModule
     (rstmts, stmtsCtx) <- runState (analyzeSuite stmts) ctx
     stmtsLocals <- mergeModule stmtsCtx
-    let stmtsAnnot = (Locals stmtsLocals, snd $ AST.annot rstmts)
-    return (Module rstmts{suite_annot = stmtsAnnot} (None, SpanEmpty))
+    let stmtsAnnot = (Just $ Locals stmtsLocals, snd $ AST.annot rstmts)
+    return (Module rstmts{suite_annot = stmtsAnnot} (Nothing, SpanEmpty))
 
 instance Analyzable AST.ImportItem AST.ImportItem where
   analyze (AST.ImportItem item as annot) = do
@@ -342,8 +351,8 @@ instance Analyzable AST.Statement Statement where
     bodyLocals <- mergeCopy bodyCtx
     (celse, elseCtx) <- runState (analyzeSuite e) ctx
     elseLocals <- mergeCopy elseCtx
-    let bodyAnnot = (Locals bodyLocals, snd $ AST.annot cbody)
-        elseAnnot = (Locals elseLocals, snd $ AST.annot celse)
+    let bodyAnnot = (Just $ Locals bodyLocals, snd $ AST.annot cbody)
+        elseAnnot = (Just $ Locals elseLocals, snd $ AST.annot celse)
     return (While ccond cbody{suite_annot = bodyAnnot}
       celse{suite_annot = elseAnnot} annot)
   analyze (AST.For targets gen body e annot) = do
@@ -354,8 +363,8 @@ instance Analyzable AST.Statement Statement where
     bodyLocals <- mergeCopy bodyCtx
     (celse, elseCtx) <- runState (analyzeSuite e) ctx
     elseLocals <- mergeCopy elseCtx
-    let bodyAnnot = (Locals bodyLocals, snd $ AST.annot cbody)
-        elseAnnot = (Locals elseLocals, snd $ AST.annot celse)
+    let bodyAnnot = (Just $ Locals bodyLocals, snd $ AST.annot cbody)
+        elseAnnot = (Just $ Locals elseLocals, snd $ AST.annot celse)
     return (For ctargets cgen cbody{suite_annot = bodyAnnot}
       celse{suite_annot = elseAnnot} annot)
   analyze (AST.Fun name args result body annot) = do
@@ -364,7 +373,7 @@ instance Analyzable AST.Statement Statement where
     (cargs, argsctx) <- runState (analyzeArray args) ctx
     (cbody, bodyCtx) <- runState (analyzeSuite body) argsctx
     bodyLocals <- mergeScope bodyCtx
-    let bodyAnnot = (Locals bodyLocals, snd $ AST.annot cbody)
+    let bodyAnnot = (Just $ Locals bodyLocals, snd $ AST.annot cbody)
     return (Fun cname cargs result cbody{suite_annot = bodyAnnot} annot)
   analyze (AST.Class name args body annot) = do
     cname <- analyze name
@@ -372,21 +381,21 @@ instance Analyzable AST.Statement Statement where
     (cargs, argsctx) <- runState (analyzeArray args) ctx
     (cbody, bodyCtx) <- runState (analyzeSuite body) argsctx
     bodyLocals <- mergeScope bodyCtx
-    let bodyAnnot = (Locals bodyLocals, snd $ AST.annot cbody)
+    let bodyAnnot = (Just $ Locals bodyLocals, snd $ AST.annot cbody)
     return (Class cname cargs cbody{suite_annot = bodyAnnot} annot)
   analyze (AST.Conditional guards e annot) = do
     cguards <- analyzeGuards guards
     ctx <- copy
     (celse, elseCtx) <- runState (analyzeSuite e) ctx
     elseLocals <- mergeCopy elseCtx
-    let elseAnnot = (Locals elseLocals, snd $ AST.annot celse)
+    let elseAnnot = (Just $ Locals elseLocals, snd $ AST.annot celse)
     return (Conditional cguards celse{suite_annot = elseAnnot} annot)
   -- TODO Handle when assign_to is an array with multiple elements
   analyze (AST.Assign [to@AST.Var{}] expr annot) = do
     cexpr <- analyze expr
     cto <- analyze to
     let ident = AST.ident_string $ AST.var_ident to
-        exprTyp = getType cexpr
+        exprTyp = maybe Unknown getType (fst $ AST.annot cexpr)
     _ <- addVarType ident exprTyp
     return (Statement $ AST.Assign [cto] cexpr annot)
   analyze (AST.Assign tos expr annot) = do
@@ -414,9 +423,9 @@ instance Analyzable AST.Statement Statement where
     elseLocals <- mergeCopy elseCtx
     (cfin, finCtx) <- runState (analyzeSuite fin) ctx
     finLocals <- mergeCopy finCtx
-    let bodyAnnot = (Locals bodyLocals, snd $ AST.annot cbody)
-        elseAnnot = (Locals elseLocals, snd $ AST.annot celse)
-        finAnnot = (Locals finLocals, snd $ AST.annot cfin)
+    let bodyAnnot = (Just $ Locals bodyLocals, snd $ AST.annot cbody)
+        elseAnnot = (Just $ Locals elseLocals, snd $ AST.annot celse)
+        finAnnot = (Just $ Locals finLocals, snd $ AST.annot cfin)
     return (Try cbody{suite_annot = bodyAnnot} cexcepts
       celse{suite_annot = elseAnnot} cfin{suite_annot = finAnnot} annot)
   analyze (AST.Raise expr annot) = do
@@ -427,7 +436,7 @@ instance Analyzable AST.Statement Statement where
     ctx <- copy
     (cbody, bodyCtx) <- runState (analyzeSuite body) ctx
     bodyLocals <- mergeCopy bodyCtx
-    let bodyAnnot = (Locals bodyLocals, snd $ AST.annot cbody)
+    let bodyAnnot = (Just $ Locals bodyLocals, snd $ AST.annot cbody)
     return (With cwctx cbody{suite_annot = bodyAnnot} annot)
   analyze (AST.Pass annot) = return (Statement $ AST.Pass annot)
   analyze (AST.Break annot) = return (Statement $ AST.Break annot)
@@ -540,7 +549,7 @@ instance Analyzable AST.Handler Handler where
     ctx <- copy
     (csuite, suiteCtx) <- runState (analyzeSuite suite) ctx
     suiteLocals <- mergeCopy suiteCtx
-    let suiteAnnot = (Locals suiteLocals, snd $ AST.annot csuite)
+    let suiteAnnot = (Just $ Locals suiteLocals, snd $ AST.annot csuite)
     return (Handler cclause csuite{suite_annot = suiteAnnot} annot)
 
 instance Analyzable AST.ExceptClause AST.ExceptClause where
@@ -593,27 +602,29 @@ instance Analyzable AST.Expr AST.Expr where
   -- TODO Differentiate refs to local vars and to outer vars
   analyze (AST.Var ident (_, annot)) = do
     cident <- analyze ident
-    return (AST.Var cident (Ref $ AST.ident_string ident, annot))
+    return (AST.Var cident (Just . Type . Ref $ AST.ident_string ident, annot))
   analyze (AST.Int val lit (_, annot)) =
-    return (AST.Int val lit (Const . CType $ Signed Int, annot))
+    return (AST.Int val lit (Just . Type . Const . CType $ Signed Int, annot))
   analyze (AST.LongInt val lit (_, annot)) =
-    return (AST.LongInt val lit (Const . CType $ Signed Long, annot))
+    let typedAnnot = (Just . Type . Const . CType $ Signed Long, annot)
+    in return (AST.LongInt val lit typedAnnot)
   analyze (AST.Float val lit (_, annot)) =
-    return (AST.Float val lit (Const . CType $ Signed Double, annot))
+    let typedAnnot = (Just . Type . Const . CType $ Signed Double, annot)
+    in return (AST.Float val lit typedAnnot)
   analyze (AST.Imaginary val lit annot) =
     return (AST.Imaginary val lit annot)
   analyze (AST.Bool val (_, annot)) =
-    return (AST.Bool val (Const $ CType BInt, annot))
+    return (AST.Bool val (Just . Type . Const $ CType BInt, annot))
   analyze (AST.None annot) =
     return (AST.None annot)
   analyze (AST.Ellipsis annot) =
     return (AST.Ellipsis annot)
   analyze (AST.ByteStrings str (_, annot)) =
-    return (AST.ByteStrings str (Const Bytes, annot))
+    return (AST.ByteStrings str (Just . Type $ Const Bytes, annot))
   analyze (AST.Strings str (_, annot)) =
-    return (AST.Strings str (Const String, annot))
+    return (AST.Strings str (Just . Type $ Const String, annot))
   analyze (AST.UnicodeStrings str (_, annot)) =
-    return (AST.UnicodeStrings str (Const Unicode, annot))
+    return (AST.UnicodeStrings str (Just . Type $ Const Unicode, annot))
   analyze (AST.Call fun args annot) = do
     cfun <- analyze fun
     cargs <- analyzeArray args

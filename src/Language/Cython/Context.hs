@@ -22,9 +22,9 @@ import Language.Cython.Error
 
 -- TODO NonLocal and Global should hold a reference instead of a copy
 data Binding =
-  Local { cytype :: [Type] } |
-  NonLocal { cytype :: [Type] } |
-  Global { cytype :: [Type] }
+  Local { cytype :: [TypeAnnotation] } |
+  NonLocal { cytype :: [TypeAnnotation] } |
+  Global { cytype :: [TypeAnnotation] }
   deriving (Eq,Ord,Show,Typeable,Data)
 
 isLocal :: Binding -> Bool
@@ -53,8 +53,8 @@ mapWithKey f m = do
   return (Map.fromList result)
 
 -- TODO Handle cycling referencing
-resolveRef' :: Map.Map String Binding -> String -> [Type] ->
-  State (Map.Map String [Type]) [Type]
+resolveRef' :: Map.Map String Binding -> String -> [TypeAnnotation] ->
+  State (Map.Map String [TypeAnnotation]) [TypeAnnotation]
 resolveRef' _ _ [] = return []
 resolveRef' toResolve k (hd@(Ref ident):tl)
   | maybe False isLocal var = do
@@ -72,8 +72,8 @@ resolveRef' toResolve k (hd:tl) = do
   newTail <- resolveRef' toResolve k tl
   return (hd:newTail)
 
-resolveRef :: Map.Map String Binding -> String -> [Type] ->
-  State (Map.Map String [Type]) [Type]
+resolveRef :: Map.Map String Binding -> String -> [TypeAnnotation] ->
+  State (Map.Map String [TypeAnnotation]) [TypeAnnotation]
 resolveRef toResolve k v = do
   resolved <- resolveRef' toResolve k v
   st <- get

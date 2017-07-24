@@ -7,12 +7,12 @@ import qualified Language.Python.Common.AST as AST
 import Language.Python.Common.SrcLocation (SrcSpan)
 import Language.Cython.AST
 import Language.Cython.Error
-import Language.Cython.Context
 import Language.Cython.Analyzable
 import Language.Cython.Annotation
 
-cythonize :: AnalysisContext -> AST.Module SrcSpan ->
-  Either (Error SrcSpan) (Module (Type, SrcSpan))
+-- TODO Use Context from Context module
+cythonize :: Context -> AST.Module SrcSpan ->
+  Either (Error SrcSpan) (Module (Maybe CythonAnnotation, SrcSpan))
 cythonize ctx pymodule =
-  let tree = fmap (\s -> (None, s)) pymodule
+  let tree = fmap (\s -> (Nothing, s)) pymodule
   in evalState (runExceptT $ analyze tree) ctx

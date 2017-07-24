@@ -75,6 +75,15 @@ data Statement annot =
     decorated_def :: Statement annot,
     stmt_annot :: annot
   } |
+  CDef {
+    var_name :: AST.Ident annot,
+    var_value :: Maybe (AST.Expr annot),
+    stmt_annot :: annot
+  } |
+  CDefSuite {
+    cdef_suite :: [AST.Statement annot],
+    stmt_annot :: annot
+  } |
   Statement (AST.Statement annot)
   deriving (Eq,Ord,Show,Typeable,Data,Functor)
 

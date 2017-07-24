@@ -5,7 +5,8 @@ import qualified System.Environment as Env (getArgs)
 import qualified Language.Python.Version2 as Python2 (parseModule)
 import Language.Python.Common.Pretty (prettyText)
 import Language.Python.Common.PrettyParseError ()
-import Language.Cython.Context
+-- TODO Use empty from Context module
+import Language.Cython.Analyzable
 import Language.Cython
 
 main :: IO ()

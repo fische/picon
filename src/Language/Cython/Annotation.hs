@@ -5,16 +5,19 @@ module Language.Cython.Annotation where
 import qualified Data.Map.Strict as Map
 import Data.Data
 
-import qualified Language.Python.Common.AST as AST
 import Language.Cython.Type
 
-data Type =
-  Locals (Map.Map String [Type]) |
+data TypeAnnotation =
   Const CythonType |
   Ref String |
-  None
+  Unknown
   deriving (Eq,Ord,Show,Typeable,Data)
 
-getType :: (AST.Annotated a) =>
-  a (Type, annot) -> Type
-getType a = fst $ AST.annot a
+data CythonAnnotation =
+  Locals (Map.Map String [TypeAnnotation]) |
+  Type TypeAnnotation
+  deriving (Eq,Ord,Show,Typeable,Data)
+
+getType :: CythonAnnotation -> TypeAnnotation
+getType (Type t) = t
+getType _ = Unknown
