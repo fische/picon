@@ -11,7 +11,7 @@ import Language.Cython.Context
 import Language.Cython.Analyzable
 import Language.Cython.Annotation
 
-cythonize :: Context -> AST.Module SrcSpan ->
+cythonize :: AnalysisContext -> AST.Module SrcSpan ->
   Either (Error SrcSpan) (Module (Type, SrcSpan))
 cythonize ctx pymodule =
   let tree = fmap (\s -> (None, s)) pymodule

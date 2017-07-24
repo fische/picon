@@ -4,9 +4,6 @@ module Language.Cython.Analyzable (
   Analyzable(..)
 ) where
 
-import qualified Control.Monad.State as State
-import Control.Monad.Trans.Except
-
 import qualified Language.Python.Common.AST as AST
 import Language.Python.Common.SrcLocation (SrcSpan(..))
 import Language.Cython.AST
@@ -14,17 +11,11 @@ import Language.Cython.Annotation
 import Language.Cython.Type
 import Language.Cython.Context
 
-runState :: ContextState SrcSpan a -> Context ->
-  ContextState SrcSpan (a, Context)
-runState s c = do
-  let (newState, newCtx) = State.runState (runExceptT s) c
-  either throwE (\r -> return (r, newCtx)) newState
-
 class Analyzable t c where
-  analyze :: t (Type, SrcSpan) -> ContextState SrcSpan (c (Type, SrcSpan))
+  analyze :: t (Type, SrcSpan) -> AnalysisState SrcSpan (c (Type, SrcSpan))
 
 analyzeArray :: (Analyzable t c) => [t (Type, SrcSpan)] ->
-  ContextState SrcSpan [c (Type, SrcSpan)]
+  AnalysisState SrcSpan [c (Type, SrcSpan)]
 analyzeArray [] = return []
 analyzeArray (hd:tl) = do
   rhd <- analyze hd
@@ -32,13 +23,13 @@ analyzeArray (hd:tl) = do
   return (rhd:rtl)
 
 analyzeSuite :: [AST.Statement (Type, SrcSpan)] ->
-  ContextState SrcSpan (Suite (Type, SrcSpan))
+  AnalysisState SrcSpan (Suite (Type, SrcSpan))
 analyzeSuite s = do
   arr <- analyzeArray s
   return (Suite arr (None, SpanEmpty))
 
 analyzeMaybe :: (Analyzable t c) => Maybe (t (Type, SrcSpan)) ->
-  ContextState SrcSpan (Maybe (c (Type, SrcSpan)))
+  AnalysisState SrcSpan (Maybe (c (Type, SrcSpan)))
 analyzeMaybe (Just m) = do
   r <- analyze m
   return (Just r)
@@ -46,7 +37,7 @@ analyzeMaybe Nothing = return Nothing
 
 analyzeGuards :: (Analyzable t c) =>
   [(t (Type, SrcSpan), AST.Suite (Type, SrcSpan))] ->
-  ContextState SrcSpan [(c (Type, SrcSpan), Suite (Type, SrcSpan))]
+  AnalysisState SrcSpan [(c (Type, SrcSpan), Suite (Type, SrcSpan))]
 analyzeGuards [] = return []
 analyzeGuards ((f,s):tl) = do
   cf <- analyze f
@@ -59,7 +50,7 @@ analyzeGuards ((f,s):tl) = do
 
 analyzeContext :: (Analyzable t c) =>
   [(t (Type, SrcSpan), Maybe (t (Type, SrcSpan)))] ->
-  ContextState SrcSpan [(c (Type, SrcSpan), Maybe (c (Type, SrcSpan)))]
+  AnalysisState SrcSpan [(c (Type, SrcSpan), Maybe (c (Type, SrcSpan)))]
 analyzeContext [] = return []
 analyzeContext ((f,s):tl) = do
   cf <- analyze f
