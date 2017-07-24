@@ -2,7 +2,7 @@
 
 module Language.Cython.Analyzable (
   Analyzable(..),
-  Context,
+  Context(..),
   empty
 ) where
 
@@ -25,6 +25,7 @@ type State annot = ContextState Context annot
 data Context =
   Context {
     inGlobalScope :: Bool,
+    options :: Options,
     globalVars :: Map.Map String [TypeAnnotation],
     outerVars :: Map.Map String [TypeAnnotation],
     localVars :: Map.Map String Binding
@@ -36,7 +37,8 @@ empty = Context {
   inGlobalScope = False,
   globalVars = Map.empty,
   outerVars = Map.empty,
-  localVars = Map.empty
+  localVars = Map.empty,
+  options = Options{}
 }
 
 copy :: State annot Context

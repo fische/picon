@@ -4,10 +4,11 @@ module Language.Cython.Context (
   ContextState,
   Language.Cython.Context.runState,
   Binding(..),
-  resolve,
   isLocal,
   isGlobal,
-  isNonLocal
+  isNonLocal,
+  resolve,
+  Options(..)
 ) where
 
 import qualified Data.Map.Strict as Map
@@ -94,3 +95,7 @@ runState :: ContextState ctx annot a -> ctx -> ContextState ctx annot (a, ctx)
 runState s c = do
   let (newState, newCtx) = Control.Monad.State.runState (runExceptT s) c
   either throwE (\r -> return (r, newCtx)) newState
+
+data Options =
+  Options {}
+  deriving (Eq,Ord,Show,Typeable,Data)

@@ -5,14 +5,17 @@ import Control.Monad.Trans.Except
 
 import qualified Language.Python.Common.AST as AST
 import Language.Python.Common.SrcLocation (SrcSpan)
+import Language.Cython.Analyzable as Analyzable
+import Language.Cython.Context
 import Language.Cython.AST
 import Language.Cython.Error
-import Language.Cython.Analyzable
 import Language.Cython.Annotation
 
 -- TODO Use Context from Context module
-cythonize :: Context -> AST.Module SrcSpan ->
+cythonize :: Options -> AST.Module SrcSpan ->
   Either (Error SrcSpan) (Module (Maybe CythonAnnotation, SrcSpan))
-cythonize ctx pymodule =
+cythonize opts pymodule =
   let tree = fmap (\s -> (Nothing, s)) pymodule
-  in evalState (runExceptT $ analyze tree) ctx
+      analysisCtx = Analyzable.empty{options = opts}
+      analysisResults = evalState (runExceptT $ analyze tree) analysisCtx
+  in analysisResults

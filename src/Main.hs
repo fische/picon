@@ -5,8 +5,7 @@ import qualified System.Environment as Env (getArgs)
 import qualified Language.Python.Version2 as Python2 (parseModule)
 import Language.Python.Common.Pretty (prettyText)
 import Language.Python.Common.PrettyParseError ()
--- TODO Use empty from Context module
-import Language.Cython.Analyzable
+import Language.Cython.Context
 import Language.Cython
 
 main :: IO ()
@@ -16,5 +15,5 @@ main = do
   case Python2.parseModule code file of
       Left err -> putStrLn $ prettyText err
       Right (pymodule, _) ->
-        let ctx = empty
-        in either print print $ cythonize ctx pymodule
+        let opts = Options{}
+        in either print print $ cythonize opts pymodule
