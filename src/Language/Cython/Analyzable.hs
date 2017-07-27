@@ -44,23 +44,46 @@ empty = Context {
   options = Options{}
 }
 
-copy :: State annot Context
-copy = do
+mergeLocalScope :: Context -> Map.Map String Binding ->
+  (Map.Map String [TypeAnnotation], Context)
+mergeLocalScope ctx localScope =
+  let (innerLocals, innerBindings) =
+        Map.partition isLocal localScope -- TODO Resolve references to innerLocals
+      (innerBoundGlobals, innerBoundNonLocals) =
+        Map.partition isGlobal innerBindings
+      mergeBinding old new = (cytype new) ++ old
+      newOuters =
+        Map.intersectionWith mergeBinding (outerVars ctx) innerBoundNonLocals
+      newGlobals =
+        Map.unionWith (++) (fmap cytype innerBoundGlobals) (globalVars ctx)
+      toResolve = fmap cytype innerLocals
+      resetBindings = Map.map (\l -> l{cytype = []}) innerBindings
+  in (toResolve, ctx{
+    localVars = Map.union innerLocals resetBindings,
+    outerVars = newOuters,
+    globalVars = newGlobals
+  })
+
+copyScope :: State annot Context
+copyScope = do
   ctx <- get
   return ctx
 
 openScope :: State annot Context
 openScope = do
-  ctx <- get
-  let localGlobals = ((localVars ctx), Map.empty)
-      partition = Map.partition isGlobal (localVars ctx)
-      (globals, outers) = bool partition localGlobals (inGlobalScope ctx)
-      updatedGlobal = Map.union (fmap cytype globals) (globalVars ctx)
-      updatedOuter = Map.union (fmap cytype outers) (outerVars ctx)
-  return (ctx{
+  ctx <- copyScope
+  let mergedCtx = snd $ mergeLocalScope ctx (localVars ctx)
+      locals = localVars mergedCtx
+      localGlobals = (locals, Map.empty)
+      partition = Map.partition isGlobal locals
+      (globals, outers) = bool partition localGlobals (inGlobalScope mergedCtx)
+      updatedGlobal = Map.union (fmap cytype globals) (globalVars mergedCtx)
+      updatedOuter = Map.union (fmap cytype outers) (outerVars mergedCtx)
+  put mergedCtx
+  return (mergedCtx{
     inGlobalScope = False,
-    globalVars = updatedGlobal,
-    outerVars = updatedOuter,
+    globalVars = Map.map (const []) updatedGlobal,
+    outerVars = Map.map (const []) updatedOuter,
     localVars = Map.empty
   })
 
@@ -89,14 +112,10 @@ bindGlobalVars' _ ctx [] = return ctx
 bindGlobalVars' loc ctx (ident:tl) =
   let locals = localVars ctx
       found = Map.lookup ident locals
-      -- TODO Find a more efficient way to insert the variable
-      insert =
-        let typ = Map.findWithDefault [] ident (globalVars ctx)
-        in bindGlobalVars' loc (ctx{
-          localVars = Map.insert ident (Global typ) locals
-        }) tl
   in maybe
-    insert
+    (bindGlobalVars' loc (ctx{
+      localVars = Map.insert ident (Global []) locals
+    }) tl)
     (\var -> if isLocal var
       then
         -- TODO Handle when variable is already declared locally
@@ -126,11 +145,11 @@ bindNonLocalVars' loc ctx (ident:tl) =
   let locals = localVars ctx
       found = Map.lookup ident locals
       checkAndInsert =
-        let outer = Map.lookup ident (outerVars ctx)
-        in maybe
+        let outer = Map.member ident (outerVars ctx)
+        in bool
           (throwE $ errVarNotFound loc ident)
-          (\var -> bindNonLocalVars' loc (ctx{
-              localVars = Map.insert ident (NonLocal var) locals
+          (bindNonLocalVars' loc (ctx{
+              localVars = Map.insert ident (NonLocal []) locals
           }) tl)
           outer
   in maybe
@@ -158,43 +177,6 @@ bindNonLocalVars loc idents = do
       put newCtx
       return ()
 
-updateLocalBindings :: Context -> Context
-updateLocalBindings ctx =
-  if inGlobalScope ctx
-    then
-      ctx{
-        localVars = Local <$> (globalVars ctx),
-        outerVars = Map.empty,
-        globalVars = Map.empty
-      }
-    else
-      let (locals, bound) = Map.partition isLocal (localVars ctx)
-          (globals, outers) = Map.partition isGlobal bound
-          mergeBinding old new = old{ cytype = new }
-          newBoundGlobals =
-            Map.intersectionWith mergeBinding globals (globalVars ctx)
-          newBoundOuters =
-            Map.intersectionWith mergeBinding outers (outerVars ctx)
-      in ctx{
-        localVars = Map.unions [locals, newBoundGlobals, newBoundOuters]
-      }
-
-mergeLocalScope :: Context -> Map.Map String Binding ->
-  (Map.Map String [TypeAnnotation], Context)
-mergeLocalScope ctx localScope =
-  let (innerLocals, innerBound) =
-        Map.partition isLocal localScope -- TODO Resolve references to innerLocals
-      (innerBoundGlobals, innerBoundNonLocals) =
-        Map.partition isGlobal innerBound
-      newOuters =
-        Map.union (fmap cytype innerBoundNonLocals) (outerVars ctx)
-      newGlobals =
-        Map.union (fmap cytype innerBoundGlobals) (globalVars ctx)
-  in (fmap cytype innerLocals, ctx{
-    outerVars = newOuters,
-    globalVars = newGlobals
-  })
-
 inScope :: Map.Map String Binding -> String -> a -> Bool
 inScope scope ident _ = Map.member ident scope
 
@@ -206,7 +188,7 @@ mergeCopy innerCtx = do
         Map.partitionWithKey (inScope currLocals) (localVars innerCtx)
       (resolvedLocals, mergedInner) = mergeLocalScope innerCtx innerScope
 
-  put $ updateLocalBindings currCtx{
+  put currCtx{
     localVars = newLocalScope,
     outerVars = (outerVars mergedInner),
     globalVars = (globalVars mergedInner)
@@ -219,21 +201,32 @@ mergeScope innerCtx = do
   let innerScope = (localVars innerCtx)
       (resolvedLocals, mergedInner) = mergeLocalScope innerCtx innerScope
 
-      -- Split updated variables in local and outer scope
-      currLocals = Map.filter isLocal (localVars currCtx)
-      (updatedLocals, updatedOuters) =
-        Map.partitionWithKey (inScope currLocals) (outerVars mergedInner)
+      mergeTypes old new = new ++ old
+      mergeBindings old new =
+        old{cytype = mergeTypes (cytype old) (cytype new)}
 
-      newOuters =
-        Map.union updatedOuters (outerVars currCtx)
-      newLocalScope =
-        Map.union (Local <$> updatedLocals) (localVars currCtx)
+  put $ bool
+    -- Split updated variables in local and outer scope if not in global scope
+    (let currLocals = Map.filter isLocal (localVars currCtx)
+         (updatedLocals, updatedOuters) =
+           Map.partitionWithKey (inScope currLocals) (outerVars mergedInner)
 
-  trace (show mergedInner) . put $ updateLocalBindings currCtx{
-    localVars = newLocalScope,
-    outerVars = newOuters,
-    globalVars = (globalVars mergedInner)
-  }
+         newGlobals =
+           Map.unionWith mergeTypes (globalVars currCtx) (globalVars mergedInner)
+         newOuters =
+           Map.unionWith mergeTypes (outerVars currCtx) updatedOuters
+
+    in currCtx{
+      localVars = Map.unionWith mergeBindings (localVars currCtx)
+        (Local <$> updatedLocals),
+      outerVars = newOuters,
+      globalVars = newGlobals
+    })
+    (currCtx{
+      localVars = Map.unionWith mergeBindings (localVars currCtx)
+        (Local <$> (globalVars mergedInner))
+    })
+    (inGlobalScope currCtx)
   return resolvedLocals
 
 mergeModule :: Context -> State annot (Map.Map String [TypeAnnotation])
@@ -278,7 +271,7 @@ analyzeGuards :: (Analyzable t c) =>
 analyzeGuards [] = return []
 analyzeGuards ((f,s):tl) = do
   cf <- analyze f
-  ctx <- copy
+  ctx <- copyScope
   (cs, suiteCtx) <- runState (analyzeSuite s) ctx
   suiteLocals <- mergeCopy suiteCtx
   let suiteAnnot = (Just $ Locals suiteLocals, snd $ AST.annot cs)
@@ -350,7 +343,7 @@ instance Analyzable AST.Statement Statement where
     return (Statement $ AST.FromImport cm citems annot)
   analyze (AST.While cond body e annot) = do
     ccond <- analyze cond
-    ctx <- copy
+    ctx <- copyScope
     (cbody, bodyCtx) <- runState (analyzeSuite body) ctx
     bodyLocals <- mergeCopy bodyCtx
     (celse, elseCtx) <- runState (analyzeSuite e) ctx
@@ -362,7 +355,7 @@ instance Analyzable AST.Statement Statement where
   analyze (AST.For targets gen body e annot) = do
     ctargets <- analyzeArray targets
     cgen <- analyze gen
-    ctx <- copy
+    ctx <- copyScope
     (cbody, bodyCtx) <- runState (analyzeSuite body) ctx
     bodyLocals <- mergeCopy bodyCtx
     (celse, elseCtx) <- runState (analyzeSuite e) ctx
@@ -389,7 +382,7 @@ instance Analyzable AST.Statement Statement where
     return (Class cname cargs cbody{suite_annot = bodyAnnot} annot)
   analyze (AST.Conditional guards e annot) = do
     cguards <- analyzeGuards guards
-    ctx <- copy
+    ctx <- copyScope
     (celse, elseCtx) <- runState (analyzeSuite e) ctx
     elseLocals <- mergeCopy elseCtx
     let elseAnnot = (Just $ Locals elseLocals, snd $ AST.annot celse)
@@ -419,7 +412,7 @@ instance Analyzable AST.Statement Statement where
     cexpr <- analyzeMaybe expr
     return (Statement $ AST.Return cexpr annot)
   analyze (AST.Try body excepts e fin annot) = do
-    ctx <- copy
+    ctx <- copyScope
     (cbody, bodyCtx) <- runState (analyzeSuite body) ctx
     bodyLocals <- mergeCopy bodyCtx
     cexcepts <- analyzeArray excepts
@@ -437,7 +430,7 @@ instance Analyzable AST.Statement Statement where
     return (Statement $ AST.Raise cexpr annot)
   analyze (AST.With wctx body annot) = do
     cwctx <- analyzeContext wctx
-    ctx <- copy
+    ctx <- copyScope
     (cbody, bodyCtx) <- runState (analyzeSuite body) ctx
     bodyLocals <- mergeCopy bodyCtx
     let bodyAnnot = (Just $ Locals bodyLocals, snd $ AST.annot cbody)
@@ -550,7 +543,7 @@ instance Analyzable AST.Argument AST.Argument where
 instance Analyzable AST.Handler Handler where
   analyze (AST.Handler clause suite annot) = do
     cclause <- analyze clause
-    ctx <- copy
+    ctx <- copyScope
     (csuite, suiteCtx) <- runState (analyzeSuite suite) ctx
     suiteLocals <- mergeCopy suiteCtx
     let suiteAnnot = (Just $ Locals suiteLocals, snd $ AST.annot csuite)
