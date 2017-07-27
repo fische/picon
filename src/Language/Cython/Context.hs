@@ -21,6 +21,13 @@ import Control.Monad.Trans.Except
 import Language.Cython.Annotation
 import Language.Cython.Error
 
+type ContextState ctx annot = ExceptT (Error annot) (State ctx)
+
+runState :: ContextState ctx annot a -> ctx -> ContextState ctx annot (a, ctx)
+runState s c = do
+  let (newState, newCtx) = Control.Monad.State.runState (runExceptT s) c
+  either throwE (\r -> return (r, newCtx)) newState
+
 -- TODO NonLocal and Global should hold a reference instead of a copy
 data Binding =
   Local { cytype :: [TypeAnnotation] } |
@@ -53,30 +60,32 @@ mapWithKey f m = do
   result <- mapWithKey' f $ Map.toList m
   return (Map.fromList result)
 
+type ResolverState = State (Map.Map String [TypeAnnotation])
+
 -- TODO Handle cycling referencing
-resolveRef' :: Map.Map String Binding -> String -> [TypeAnnotation] ->
-  State (Map.Map String [TypeAnnotation]) [TypeAnnotation]
-resolveRef' _ _ [] = return []
-resolveRef' toResolve k (hd@(Ref ident):tl)
+resolveRef' :: Map.Map String Binding -> [TypeAnnotation] ->
+  ResolverState [TypeAnnotation]
+resolveRef' _ [] = return []
+resolveRef' toResolve (hd@(Ref ident):tl)
   | maybe False isLocal var = do
     st <- get
     let resolved = Map.lookup ident st
         varToResolve = cytype $ fromJust var
     newHead <- maybe (resolveRef toResolve ident varToResolve) return resolved
-    newTail <- resolveRef' toResolve k tl
+    newTail <- resolveRef' toResolve tl
     return (newHead ++ newTail)
   | otherwise = do
-    newTail <- resolveRef' toResolve k tl
+    newTail <- resolveRef' toResolve tl
     return (hd:newTail)
   where var = Map.lookup ident toResolve
-resolveRef' toResolve k (hd:tl) = do
-  newTail <- resolveRef' toResolve k tl
+resolveRef' toResolve (hd:tl) = do
+  newTail <- resolveRef' toResolve tl
   return (hd:newTail)
 
 resolveRef :: Map.Map String Binding -> String -> [TypeAnnotation] ->
-  State (Map.Map String [TypeAnnotation]) [TypeAnnotation]
+  ResolverState [TypeAnnotation]
 resolveRef toResolve k v = do
-  resolved <- resolveRef' toResolve k v
+  resolved <- resolveRef' toResolve v
   st <- get
   put (Map.insert k resolved st)
   return resolved
@@ -88,13 +97,6 @@ resolve toResolve scope =
         resolved <- resolveRef toResolve k (cytype v)
         return v{ cytype = resolved }
   in evalState (mapWithKey resolveBinding scope) Map.empty
-
-type ContextState ctx annot = ExceptT (Error annot) (State ctx)
-
-runState :: ContextState ctx annot a -> ctx -> ContextState ctx annot (a, ctx)
-runState s c = do
-  let (newState, newCtx) = Control.Monad.State.runState (runExceptT s) c
-  either throwE (\r -> return (r, newCtx)) newState
 
 data Options =
   Options {}

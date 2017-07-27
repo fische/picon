@@ -282,12 +282,11 @@ analyzeGuards ((f,s):tl) = do
   rtl <- analyzeGuards tl
   return ((cf, cs{suite_annot = suiteAnnot}):rtl)
 
-type PythonContext t =
-  (t (Maybe CythonAnnotation, SrcSpan),
-    Maybe (t (Maybe CythonAnnotation, SrcSpan)))
-
-analyzeContext :: (Analyzable t c) => [(PythonContext t)] ->
-  State SrcSpan [(PythonContext c)]
+analyzeContext :: (Analyzable t c) =>
+  [(t (Maybe CythonAnnotation, SrcSpan),
+    Maybe (t (Maybe CythonAnnotation, SrcSpan)))] ->
+  State SrcSpan [(c (Maybe CythonAnnotation, SrcSpan),
+    Maybe (c (Maybe CythonAnnotation, SrcSpan)))]
 analyzeContext [] = return []
 analyzeContext ((f,s):tl) = do
   cf <- analyze f
