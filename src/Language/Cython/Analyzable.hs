@@ -10,7 +10,7 @@ import qualified Data.Map.Strict as Map
 import Data.Data
 import Data.Bool
 
-import Control.Monad.State (get, put)
+import Control.Monad.State (get, put, evalState)
 import Control.Monad.Trans.Except
 
 import qualified Language.Python.Common.AST as AST
@@ -54,9 +54,17 @@ mergeLocalScope ctx localScope =
         Map.intersectionWith mergeBinding (outerVars ctx) innerBoundNonLocals
       newGlobals =
         Map.unionWith (++) (fmap cytype innerBoundGlobals) (globalVars ctx)
-      toResolve = fmap cytype innerLocals
+
+      -- Reset updates to bindings
       resetBindings = Map.map (\l -> l{cytype = []}) innerBindings
-  in (toResolve, ctx{
+
+      -- Resolve references to variables from the local scope
+      resolve ident binding = do
+        resolvedTypes <- resolveLocalRefs'
+          (fmap cytype . getLocalRefTypes innerLocals) ident $ cytype binding
+        return resolvedTypes
+      resolvedLocals = evalState (mapWithKey resolve innerLocals) Map.empty
+  in (resolvedLocals, ctx{
     localVars = Map.union innerLocals resetBindings,
     outerVars = newOuters,
     globalVars = newGlobals
@@ -214,6 +222,29 @@ updateRefs isRightRefType isCurrLocalVar ctx =
     outerVars = outers
   }
 
+getLocalRefTypes :: Map.Map String a -> Ref -> Maybe a
+getLocalRefTypes toResolve (LocalRef ident) = Map.lookup ident toResolve
+getLocalRefTypes _ _ = Nothing
+
+resolveLocalRefs' :: (Ref -> Maybe [TypeAnnotation]) -> String ->
+  [TypeAnnotation] -> ResolverState [TypeAnnotation]
+resolveLocalRefs' maybeResolve ident types = do
+  resolvedTypes <- resolveRefs maybeResolve ident types
+  st <- get
+  put $ Map.insert (LocalRef ident) resolvedTypes st
+  return resolvedTypes
+
+resolveLocalRefs :: Map.Map String [TypeAnnotation] -> Context -> Context
+resolveLocalRefs toResolve ctx =
+  let resolvedOuters = evalState (mapWithKey (resolveLocalRefs'
+        (getLocalRefTypes toResolve)) (outerVars ctx)) Map.empty
+      resolvedGlobals = evalState (mapWithKey (resolveLocalRefs'
+        (getLocalRefTypes toResolve)) (globalVars ctx)) Map.empty
+  in ctx{
+    globalVars = resolvedGlobals,
+    outerVars = resolvedOuters
+  }
+
 mergeCopy :: Context -> State annot (Map.Map String [TypeAnnotation])
 mergeCopy innerCtx = do
   currCtx <- get
@@ -221,11 +252,19 @@ mergeCopy innerCtx = do
       (newLocalScope, innerScope) =
         Map.partitionWithKey (inScope currLocals) (localVars innerCtx)
       (toResolve, mergedInner) = mergeLocalScope innerCtx innerScope
+      resolvedInner = resolveLocalRefs toResolve mergedInner
+
+      resolve ident binding = do
+        resolvedTypes <- resolveLocalRefs' (getLocalRefTypes toResolve) ident $
+          cytype binding
+        return binding{cytype = resolvedTypes}
+      resolvedLocalScope = evalState (mapWithKey resolve newLocalScope)
+        Map.empty
 
   put currCtx{
-    localVars = newLocalScope,
-    outerVars = (outerVars mergedInner),
-    globalVars = (globalVars mergedInner)
+    localVars = resolvedLocalScope,
+    outerVars = (outerVars resolvedInner),
+    globalVars = (globalVars resolvedInner)
   }
   return toResolve
 
@@ -234,13 +273,14 @@ mergeScope innerCtx = do
   currCtx <- get
   let innerScope = (localVars innerCtx)
       (toResolve, mergedInner) = mergeLocalScope innerCtx innerScope
+      resolvedInner = resolveLocalRefs toResolve mergedInner
 
       -- Update refs to current local variables
       currLocals = Map.filter isLocal $ localVars currCtx
       isCurrentLocalVar k = Map.member k currLocals
       updatedInner =
         updateRefs (bool isNonLocalRef isGlobalRef (inGlobalScope currCtx))
-          isCurrentLocalVar mergedInner
+          isCurrentLocalVar resolvedInner
 
       mergeTypes old new = new ++ old
       mergeBindings old new =

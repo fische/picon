@@ -7,12 +7,13 @@ module Language.Cython.Context (
   isLocal,
   isGlobal,
   isNonLocal,
-  resolve,
+  mapWithKey,
+  ResolverState,
+  resolveRefs,
   Options(..)
 ) where
 
 import qualified Data.Map.Strict as Map
-import Data.Maybe (fromJust)
 import Data.Data
 
 import Control.Monad.State
@@ -60,43 +61,28 @@ mapWithKey f m = do
   result <- mapWithKey' f $ Map.toList m
   return (Map.fromList result)
 
-type ResolverState = State (Map.Map String [TypeAnnotation])
+type ResolverState = State (Map.Map Ref [TypeAnnotation])
 
 -- TODO Handle cycling referencing
-resolveRef' :: Map.Map String Binding -> [TypeAnnotation] ->
+resolveRefs :: (Ref -> Maybe [TypeAnnotation]) -> String -> [TypeAnnotation] ->
   ResolverState [TypeAnnotation]
-resolveRef' _ [] = return []
-resolveRef' toResolve (hd@(Ref ident):tl)
-  | maybe False isLocal var = do
-    st <- get
-    let resolved = Map.lookup ident st
-        varToResolve = cytype $ fromJust var
-    newHead <- maybe (resolveRef toResolve ident varToResolve) return resolved
-    newTail <- resolveRef' toResolve tl
-    return (newHead ++ newTail)
-  | otherwise = do
-    newTail <- resolveRef' toResolve tl
-    return (hd:newTail)
-  where var = Map.lookup ident toResolve
-resolveRef' toResolve (hd:tl) = do
-  newTail <- resolveRef' toResolve tl
-  return (hd:newTail)
-
-resolveRef :: Map.Map String Binding -> String -> [TypeAnnotation] ->
-  ResolverState [TypeAnnotation]
-resolveRef toResolve k v = do
-  resolved <- resolveRef' toResolve v
+resolveRefs _ _ [] = return []
+resolveRefs maybeResolve ident (hd@(Ref ref):tl) = do
   st <- get
-  put (Map.insert k resolved st)
-  return resolved
-
-resolve :: Map.Map String Binding -> Map.Map String Binding ->
-  Map.Map String Binding
-resolve toResolve scope =
-  let resolveBinding k v = do
-        resolved <- resolveRef toResolve k (cytype v)
-        return v{ cytype = resolved }
-  in evalState (mapWithKey resolveBinding scope) Map.empty
+  newHead <- maybe
+    (return [hd])
+    (\var ->
+      let resolve = do
+            resolved <- resolveRefs maybeResolve ident var
+            put $ Map.insert ref resolved st
+            return resolved
+      in maybe resolve return $ Map.lookup ref st) $
+    maybeResolve ref
+  newTail <- resolveRefs maybeResolve ident tl
+  return (newHead ++ newTail)
+resolveRefs maybeResolve ident (hd:tl) = do
+  newTail <- resolveRefs maybeResolve ident tl
+  return (hd:newTail)
 
 data Options =
   Options {}
