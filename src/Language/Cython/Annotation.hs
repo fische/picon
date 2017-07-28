@@ -1,13 +1,13 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 
 module Language.Cython.Annotation (
-  TypeAnnotation(..),
-  getLocalRefIdentifier,
-  getNonLocalRefIdentifier,
-  getGlobalRefIdentifier,
+  Ref(..),
+  getRefIdentifier,
   isLocalRef,
   isNonLocalRef,
   isGlobalRef,
+  TypeAnnotation(..),
+  isRef,
   isConst,
   CythonAnnotation(..),
   getType
@@ -18,37 +18,38 @@ import Data.Data
 
 import Language.Cython.Type
 
-data TypeAnnotation =
-  Const CythonType |
+data Ref =
   LocalRef String |
   NonLocalRef String |
-  GlobalRef String |
-  Unknown
+  GlobalRef String
   deriving (Eq,Ord,Show,Typeable,Data)
 
-getLocalRefIdentifier :: TypeAnnotation -> Maybe String
-getLocalRefIdentifier (LocalRef ident) = Just ident
-getLocalRefIdentifier _ = Nothing
+getRefIdentifier :: Ref -> String
+getRefIdentifier (LocalRef ident) = ident
+getRefIdentifier (NonLocalRef ident) = ident
+getRefIdentifier (GlobalRef ident) = ident
 
-getNonLocalRefIdentifier :: TypeAnnotation -> Maybe String
-getNonLocalRefIdentifier (NonLocalRef ident) = Just ident
-getNonLocalRefIdentifier _ = Nothing
-
-getGlobalRefIdentifier :: TypeAnnotation -> Maybe String
-getGlobalRefIdentifier (GlobalRef ident) = Just ident
-getGlobalRefIdentifier _ = Nothing
-
-isLocalRef :: TypeAnnotation -> Bool
+isLocalRef :: Ref -> Bool
 isLocalRef (LocalRef _) = True
 isLocalRef _ = False
 
-isNonLocalRef :: TypeAnnotation -> Bool
+isNonLocalRef :: Ref -> Bool
 isNonLocalRef (NonLocalRef _) = True
 isNonLocalRef _ = False
 
-isGlobalRef :: TypeAnnotation -> Bool
+isGlobalRef :: Ref -> Bool
 isGlobalRef (GlobalRef _) = True
 isGlobalRef _ = False
+
+data TypeAnnotation =
+  Const CythonType |
+  Ref Ref |
+  Unknown
+  deriving (Eq,Ord,Show,Typeable,Data)
+
+isRef :: TypeAnnotation -> Bool
+isRef (Ref _) = True
+isRef _ = False
 
 isConst :: TypeAnnotation -> Bool
 isConst (Const _) = True

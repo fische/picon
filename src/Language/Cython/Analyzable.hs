@@ -95,12 +95,12 @@ openModule = do
     localVars = Map.empty
   })
 
-getBindingRef :: String -> Binding -> TypeAnnotation
+getBindingRef :: String -> Binding -> Ref
 getBindingRef ident (Local _) = LocalRef ident
 getBindingRef ident (NonLocal _) = NonLocalRef ident
 getBindingRef ident (Global _) = GlobalRef ident
 
-getVarRef :: String -> State annot TypeAnnotation
+getVarRef :: String -> State annot Ref
 getVarRef ident = do
   ctx <- get
   let inLocalScope = Map.lookup ident (localVars ctx)
@@ -193,17 +193,20 @@ bindNonLocalVars loc idents = do
 inScope :: Map.Map String Binding -> String -> a -> Bool
 inScope scope ident _ = Map.member ident scope
 
-updateRefs' :: (TypeAnnotation -> Maybe String) -> (String -> Bool) ->
+updateRefs' :: (Ref -> Bool) -> (String -> Bool) ->
   [TypeAnnotation] -> [TypeAnnotation]
 updateRefs' _ _ [] = []
-updateRefs' getRefIdent isCurrLocalVar (hd:tl) =
-  (maybe hd LocalRef $ getRefIdent hd):
-    (updateRefs' getRefIdent isCurrLocalVar tl)
+updateRefs' isRightRefType isCurrLocalVar (hd@(Ref ref):tl) =
+  let refIdent = getRefIdentifier ref
+      changeToLocalRef = isRightRefType ref && isCurrLocalVar refIdent
+  in (bool hd (Ref $ LocalRef refIdent) changeToLocalRef):
+      (updateRefs' isRightRefType isCurrLocalVar tl)
+updateRefs' isRightRefType isCurrLocalVar (hd:tl) =
+  hd:(updateRefs' isRightRefType isCurrLocalVar tl)
 
-updateRefs :: (TypeAnnotation -> Maybe String) -> (String -> Bool) ->
-  Context -> Context
-updateRefs getRefIdent isCurrLocalVar ctx =
-  let update = updateRefs' getRefIdent isCurrLocalVar
+updateRefs :: (Ref -> Bool) -> (String -> Bool) -> Context -> Context
+updateRefs isRightRefType isCurrLocalVar ctx =
+  let update = updateRefs' isRightRefType isCurrLocalVar
       globals = Map.map update (globalVars ctx)
       outers = Map.map update (outerVars ctx)
   in ctx{
@@ -236,8 +239,8 @@ mergeScope innerCtx = do
       currLocals = Map.filter isLocal $ localVars currCtx
       isCurrentLocalVar k = Map.member k currLocals
       updatedInner =
-        updateRefs (bool getNonLocalRefIdentifier getGlobalRefIdentifier
-          (inGlobalScope currCtx)) isCurrentLocalVar mergedInner
+        updateRefs (bool isNonLocalRef isGlobalRef (inGlobalScope currCtx))
+          isCurrentLocalVar mergedInner
 
       mergeTypes old new = new ++ old
       mergeBindings old new =
@@ -638,7 +641,7 @@ instance Analyzable AST.Expr AST.Expr where
   analyze (AST.Var ident (_, annot)) = do
     cident <- analyze ident
     ref <- getVarRef $ AST.ident_string ident
-    return (AST.Var cident (Just . Type $ ref, annot))
+    return (AST.Var cident (Just . Type . Ref $ ref, annot))
   analyze (AST.Int val lit (_, annot)) =
     return (AST.Int val lit (Just . Type . Const . CType $ Signed Int, annot))
   analyze (AST.LongInt val lit (_, annot)) =
