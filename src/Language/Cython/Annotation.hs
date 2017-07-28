@@ -9,7 +9,9 @@ import Language.Cython.Type
 
 data TypeAnnotation =
   Const CythonType |
-  Ref String |
+  LocalRef String |
+  NonLocalRef String |
+  GlobalRef String |
   Unknown
   deriving (Eq,Ord,Show,Typeable,Data)
 

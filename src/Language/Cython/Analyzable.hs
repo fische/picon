@@ -21,8 +21,6 @@ import Language.Cython.AST
 import Language.Cython.Annotation
 import Language.Cython.Type
 
-import Debug.Trace
-
 type State annot = ContextState Context annot
 
 data Context =
@@ -96,6 +94,21 @@ openModule = do
     outerVars = Map.empty,
     localVars = Map.empty
   })
+
+getBindingRef :: String -> Binding -> TypeAnnotation
+getBindingRef ident (Local _) = LocalRef ident
+getBindingRef ident (NonLocal _) = NonLocalRef ident
+getBindingRef ident (Global _) = GlobalRef ident
+
+getVarRef :: String -> State annot TypeAnnotation
+getVarRef ident = do
+  ctx <- get
+  let inLocalScope = Map.lookup ident (localVars ctx)
+      inOuterScope = Map.member ident (outerVars ctx)
+  return $ maybe
+    (bool (GlobalRef ident) (NonLocalRef ident) inOuterScope)
+    (getBindingRef ident)
+    inLocalScope
 
 addVarType :: String -> TypeAnnotation -> State annot ()
 addVarType ident typ = do
@@ -599,7 +612,8 @@ instance Analyzable AST.Expr AST.Expr where
   -- TODO Differentiate refs to local vars and to outer vars
   analyze (AST.Var ident (_, annot)) = do
     cident <- analyze ident
-    return (AST.Var cident (Just . Type . Ref $ AST.ident_string ident, annot))
+    ref <- getVarRef $ AST.ident_string ident
+    return (AST.Var cident (Just . Type $ ref, annot))
   analyze (AST.Int val lit (_, annot)) =
     return (AST.Int val lit (Just . Type . Const . CType $ Signed Int, annot))
   analyze (AST.LongInt val lit (_, annot)) =
