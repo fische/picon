@@ -193,26 +193,51 @@ bindNonLocalVars loc idents = do
 inScope :: Map.Map String Binding -> String -> a -> Bool
 inScope scope ident _ = Map.member ident scope
 
+updateRefs' :: (TypeAnnotation -> Maybe String) -> (String -> Bool) ->
+  [TypeAnnotation] -> [TypeAnnotation]
+updateRefs' _ _ [] = []
+updateRefs' getRefIdent isCurrLocalVar (hd:tl) =
+  (maybe hd LocalRef $ getRefIdent hd):
+    (updateRefs' getRefIdent isCurrLocalVar tl)
+
+updateRefs :: (TypeAnnotation -> Maybe String) -> (String -> Bool) ->
+  Context -> Context
+updateRefs getRefIdent isCurrLocalVar ctx =
+  let update = updateRefs' getRefIdent isCurrLocalVar
+      globals = Map.map update (globalVars ctx)
+      outers = Map.map update (outerVars ctx)
+  in ctx{
+    globalVars = globals,
+    outerVars = outers
+  }
+
 mergeCopy :: Context -> State annot (Map.Map String [TypeAnnotation])
 mergeCopy innerCtx = do
   currCtx <- get
   let currLocals = localVars currCtx
       (newLocalScope, innerScope) =
         Map.partitionWithKey (inScope currLocals) (localVars innerCtx)
-      (resolvedLocals, mergedInner) = mergeLocalScope innerCtx innerScope
+      (toResolve, mergedInner) = mergeLocalScope innerCtx innerScope
 
   put currCtx{
     localVars = newLocalScope,
     outerVars = (outerVars mergedInner),
     globalVars = (globalVars mergedInner)
   }
-  return resolvedLocals
+  return toResolve
 
 mergeScope :: Context -> State annot (Map.Map String [TypeAnnotation])
 mergeScope innerCtx = do
   currCtx <- get
   let innerScope = (localVars innerCtx)
-      (resolvedLocals, mergedInner) = mergeLocalScope innerCtx innerScope
+      (toResolve, mergedInner) = mergeLocalScope innerCtx innerScope
+
+      -- Update refs to current local variables
+      currLocals = Map.filter isLocal $ localVars currCtx
+      isCurrentLocalVar k = Map.member k currLocals
+      updatedInner =
+        updateRefs (bool getNonLocalRefIdentifier getGlobalRefIdentifier
+          (inGlobalScope currCtx)) isCurrentLocalVar mergedInner
 
       mergeTypes old new = new ++ old
       mergeBindings old new =
@@ -220,12 +245,12 @@ mergeScope innerCtx = do
 
   put $ bool
     -- Split updated variables in local and outer scope if not in global scope
-    (let currLocals = Map.filter isLocal (localVars currCtx)
-         (updatedLocals, updatedOuters) =
-           Map.partitionWithKey (inScope currLocals) (outerVars mergedInner)
+    (let (updatedLocals, updatedOuters) =
+           Map.partitionWithKey (inScope currLocals) (outerVars updatedInner)
 
          newGlobals =
-           Map.unionWith mergeTypes (globalVars currCtx) (globalVars mergedInner)
+           Map.unionWith mergeTypes (globalVars currCtx)
+             (globalVars updatedInner)
          newOuters =
            Map.unionWith mergeTypes (outerVars currCtx) updatedOuters
 
@@ -237,10 +262,10 @@ mergeScope innerCtx = do
     })
     (currCtx{
       localVars = Map.unionWith mergeBindings (localVars currCtx)
-        (Local <$> (globalVars mergedInner))
+        (Local <$> (globalVars updatedInner))
     })
     (inGlobalScope currCtx)
-  return resolvedLocals
+  return toResolve
 
 mergeModule :: Context -> State annot (Map.Map String [TypeAnnotation])
 mergeModule innerCtx =
