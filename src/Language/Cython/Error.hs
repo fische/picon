@@ -32,3 +32,7 @@ errVarAlreadyBound loc ident =
 errNotAllowedInGlobalScope :: p -> String -> Error p
 errNotAllowedInGlobalScope loc action =
   Error loc $ action ++ " from the global scope are not allowed"
+
+errVariableShouldHoldRef :: p -> String -> Error p
+errVariableShouldHoldRef loc ident =
+  Error loc $ "Node of variable " ++ ident ++ " should hold a reference"

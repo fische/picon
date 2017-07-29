@@ -42,6 +42,10 @@ empty = Context {
   options = Options{}
 }
 
+getLocalRefTypes :: Map.Map String a -> Ref -> Maybe a
+getLocalRefTypes toResolve (LocalRef ident) = Map.lookup ident toResolve
+getLocalRefTypes _ _ = Nothing
+
 mergeLocalScope :: Context -> Map.Map String Binding ->
   (Map.Map String [TypeAnnotation], Context)
 mergeLocalScope ctx localScope =
@@ -221,10 +225,6 @@ updateRefs isRightRefType isCurrLocalVar ctx =
     globalVars = globals,
     outerVars = outers
   }
-
-getLocalRefTypes :: Map.Map String a -> Ref -> Maybe a
-getLocalRefTypes toResolve (LocalRef ident) = Map.lookup ident toResolve
-getLocalRefTypes _ _ = Nothing
 
 resolveLocalRefs' :: (Ref -> Maybe [TypeAnnotation]) -> String ->
   [TypeAnnotation] -> ResolverState [TypeAnnotation]

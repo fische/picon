@@ -8,14 +8,17 @@ module Language.Cython.Cythonizable (
 
 import qualified Data.Map.Strict as Map
 import Data.Data
+import Data.Bool
 
-import Control.Monad.State (get)
+import Control.Monad.State (get, put, evalState)
+import Control.Monad.Trans.Except
 
 import qualified Language.Python.Common.AST as AST
 import Language.Python.Common.SrcLocation (SrcSpan(..))
 import Language.Cython.Annotation
 import Language.Cython.AST
 import Language.Cython.Context
+import Language.Cython.Error
 
 type State annot = ContextState Context annot
 
@@ -25,6 +28,7 @@ data Context =
     options :: Options,
     globalVars :: Map.Map String [TypeAnnotation],
     outerVars :: Map.Map String [TypeAnnotation],
+    localStash :: Map.Map String [TypeAnnotation],
     localVars :: Map.Map String [TypeAnnotation]
   }
   deriving (Eq,Ord,Show,Typeable,Data)
@@ -34,9 +38,60 @@ empty = Context {
   inGlobalScope = False,
   globalVars = Map.empty,
   outerVars = Map.empty,
+  localStash = Map.empty,
   localVars = Map.empty,
   options = Options{}
 }
+
+copyScope :: State annot Context
+copyScope = do
+  ctx <- get
+  return ctx
+
+openScope :: State annot Context
+openScope = do
+  ctx <- copyScope
+  return $ bool ctx{
+    inGlobalScope = False,
+    localStash = Map.empty,
+    localVars = Map.empty,
+    globalVars =
+      Map.unions [(localStash ctx), (localVars ctx), (outerVars ctx)]
+  } ctx{
+    inGlobalScope = False,
+    localStash = Map.empty,
+    localVars = Map.empty,
+    globalVars =
+      Map.unions [(localStash ctx), (localVars ctx), (globalVars ctx)]
+  } (inGlobalScope ctx)
+
+getRefTypes :: Context -> Ref -> Maybe [TypeAnnotation]
+getRefTypes ctx (LocalRef ident) = Map.lookup ident (localVars ctx)
+getRefTypes ctx (NonLocalRef ident) = Map.lookup ident (outerVars ctx)
+getRefTypes ctx (GlobalRef ident) = Map.lookup ident (globalVars ctx)
+
+mergeLocals :: Map.Map String [TypeAnnotation] -> Context -> Context
+mergeLocals locals ctx =
+  let resolvedLocals =
+        evalState (mapWithKey (resolveRefs (getRefTypes ctx)) locals) Map.empty
+  in ctx{
+    localStash = resolvedLocals
+  }
+
+unstashLocal :: annot -> String -> State annot [TypeAnnotation]
+unstashLocal loc ident = do
+  ctx <- get
+  let remove _ _ = Nothing
+      (found, newStash) = Map.updateLookupWithKey remove ident (localStash ctx)
+  maybe
+    (throwE $ errVarNotFound loc ident)
+    (\types -> do
+      put ctx{
+        localVars = Map.insert ident types (localVars ctx),
+        localStash = newStash
+      }
+      return types)
+    found
 
 cythonizeAnnotation :: (Maybe CythonAnnotation, SrcSpan) ->
   (Maybe TypeAnnotation, SrcSpan)
@@ -72,7 +127,7 @@ cythonizeGuards :: (Cythonizable c) =>
 cythonizeGuards [] = return []
 cythonizeGuards ((f,s):tl) = do
   cf <- cythonize f
-  ctx <- get
+  ctx <- copyScope
   (cs, _) <- runState (cythonize s) ctx
   rtl <- cythonizeGuards tl
   return ((cf, cs):rtl)
@@ -86,7 +141,7 @@ cythonizePythonGuards :: (Cythonizable c) =>
 cythonizePythonGuards [] = return []
 cythonizePythonGuards ((f,s):tl) = do
   cf <- cythonize f
-  ctx <- get
+  ctx <- copyScope
   (cs, _) <- runState (cythonizeArray s) ctx
   rtl <- cythonizePythonGuards tl
   return ((cf, cs):rtl)
@@ -110,6 +165,11 @@ instance Cythonizable Module where
     return (Module rstmts (cythonizeAnnotation annot))
 
 instance Cythonizable Suite where
+  cythonize (Suite stmts (Just (Locals locals), annot)) = do
+    ctx <- get
+    put $ mergeLocals locals ctx
+    rstmts <- cythonizeArray stmts
+    return (Suite rstmts (Nothing, annot))
   cythonize (Suite stmts (_, annot)) = do
     rstmts <- cythonizeArray stmts
     return (Suite rstmts (Nothing, annot))
@@ -117,33 +177,33 @@ instance Cythonizable Suite where
 instance Cythonizable Statement where
   cythonize (While cond body e annot) = do
     ccond <- cythonize cond
-    ctx <- get
+    ctx <- copyScope
     (cbody, _) <- runState (cythonize body) ctx
     (celse, _) <- runState (cythonize e) ctx
     return (While ccond cbody celse (cythonizeAnnotation annot))
   cythonize (For targets gen body e annot) = do
     ctargets <- cythonizeArray targets
     cgen <- cythonize gen
-    ctx <- get
+    ctx <- copyScope
     (cbody, _) <- runState (cythonize body) ctx
     (celse, _) <- runState (cythonize e) ctx
     return (For ctargets cgen cbody celse (cythonizeAnnotation annot))
   cythonize (Fun name args result body annot) = do
     cname <- cythonize name
     cresult <- cythonizeMaybe result
-    ctx <- get
+    ctx <- openScope
     (cargs, argsctx) <- runState (cythonizeArray args) ctx
     (cbody, _) <- runState (cythonize body) argsctx
     return (Fun cname cargs cresult cbody (cythonizeAnnotation annot))
   cythonize (Class name args body annot) = do
     cname <- cythonize name
-    ctx <- get
+    ctx <- copyScope
     (cargs, argsctx) <- runState (cythonizeArray args) ctx
     (cbody, _) <- runState (cythonize body) argsctx
     return (Class cname cargs cbody (cythonizeAnnotation annot))
   cythonize (Conditional guards e annot) = do
     cguards <- cythonizeGuards guards
-    ctx <- get
+    ctx <- copyScope
     (celse, _) <- runState (cythonize e) ctx
     return (Conditional cguards celse (cythonizeAnnotation annot))
   cythonize (Decorated decorators def annot) = do
@@ -151,7 +211,7 @@ instance Cythonizable Statement where
     cydef <- cythonize def
     return (Decorated cdecorators cydef (cythonizeAnnotation annot))
   cythonize (Try body excepts e fin annot) = do
-    ctx <- get
+    ctx <- copyScope
     (cbody, _) <- runState (cythonize body) ctx
     cexcepts <- cythonizeArray excepts
     (celse, _) <- runState (cythonize e) ctx
@@ -159,7 +219,7 @@ instance Cythonizable Statement where
     return (Try cbody cexcepts celse cfin (cythonizeAnnotation annot))
   cythonize (With wctx body annot) = do
     cwctx <- cythonizeContext wctx
-    ctx <- get
+    ctx <- copyScope
     (cbody, _) <- runState (cythonize body) ctx
     return (With cwctx cbody (cythonizeAnnotation annot))
   cythonize (CDef name val annot) = do
@@ -169,6 +229,27 @@ instance Cythonizable Statement where
   cythonize (CDefSuite suite annot) = do
     csuite <- cythonizeArray suite
     return (CDefSuite csuite (cythonizeAnnotation annot))
+  cythonize (Statement (AST.Assign [to@AST.Var{}] expr annot)) = do
+    cexpr <- cythonize expr
+    cto <- cythonize to
+    ctx <- get
+    let loc = snd annot
+        ident = AST.ident_string $ AST.var_ident to
+        cdef = do
+          unstashed <- unstashLocal loc ident
+          let cannot = (Just $ head unstashed, loc)
+          return $ CDef (AST.var_ident cto) (Just cexpr) cannot
+
+        reassign _ =
+          let cannot = cythonizeAnnotation annot
+          in return $ Statement (AST.Assign [cto] cexpr cannot)
+
+        getVarTypes (Just (Type (Ref ref))) =
+          let types = getRefTypes ctx ref
+          in maybe cdef reassign types
+        getVarTypes _ =
+          throwE $ errVariableShouldHoldRef loc ident
+    getVarTypes . fst $ AST.annot to
   cythonize (Statement stmt) = do
     rstmt <- cythonize stmt
     return (Statement rstmt)
@@ -176,7 +257,7 @@ instance Cythonizable Statement where
 instance Cythonizable Handler where
   cythonize (Handler clause suite annot) = do
     cclause <- cythonize clause
-    ctx <- get
+    ctx <- copyScope
     (csuite, _) <- runState (cythonize suite) ctx
     return (Handler cclause csuite (cythonizeAnnotation annot))
 
@@ -237,33 +318,33 @@ instance Cythonizable AST.Statement where
     return (AST.FromImport cm citems (cythonizeAnnotation annot))
   cythonize (AST.While cond body e annot) = do
     ccond <- cythonize cond
-    ctx <- get
+    ctx <- copyScope
     (cbody, _) <- runState (cythonizeArray body) ctx
     (celse, _) <- runState (cythonizeArray e) ctx
     return (AST.While ccond cbody celse (cythonizeAnnotation annot))
   cythonize (AST.For targets gen body e annot) = do
     ctargets <- cythonizeArray targets
     cgen <- cythonize gen
-    ctx <- get
+    ctx <- copyScope
     (cbody, _) <- runState (cythonizeArray body) ctx
     (celse, _) <- runState (cythonizeArray e) ctx
     return (AST.For ctargets cgen cbody celse (cythonizeAnnotation annot))
   cythonize (AST.Fun name args result body annot) = do
     cname <- cythonize name
     cresult <- cythonizeMaybe result
-    ctx <- get
+    ctx <- openScope
     (cargs, argsctx) <- runState (cythonizeArray args) ctx
     (cbody, _) <- runState (cythonizeArray body) argsctx
     return (AST.Fun cname cargs cresult cbody (cythonizeAnnotation annot))
   cythonize (AST.Class name args body annot) = do
     cname <- cythonize name
-    ctx <- get
+    ctx <- copyScope
     (cargs, argsctx) <- runState (cythonizeArray args) ctx
     (cbody, _) <- runState (cythonizeArray body) argsctx
     return (AST.Class cname cargs cbody (cythonizeAnnotation annot))
   cythonize (AST.Conditional guards e annot) = do
     cguards <- cythonizePythonGuards guards
-    ctx <- get
+    ctx <- copyScope
     (celse, _) <- runState (cythonizeArray e) ctx
     return (AST.Conditional cguards celse (cythonizeAnnotation annot))
   -- TODO Handle when assign_to is an array with multiple elements
@@ -288,7 +369,7 @@ instance Cythonizable AST.Statement where
     cexpr <- cythonizeMaybe expr
     return (AST.Return cexpr (cythonizeAnnotation annot))
   cythonize (AST.Try body excepts e fin annot) = do
-    ctx <- get
+    ctx <- copyScope
     (cbody, _) <- runState (cythonizeArray body) ctx
     cexcepts <- cythonizeArray excepts
     (celse, _) <- runState (cythonizeArray e) ctx
@@ -299,7 +380,8 @@ instance Cythonizable AST.Statement where
     return (AST.Raise cexpr (cythonizeAnnotation annot))
   cythonize (AST.With wctx body annot) = do
     cwctx <- cythonizeContext wctx
-    cbody <- cythonizeArray body
+    ctx <- copyScope
+    (cbody, _) <- runState (cythonizeArray body) ctx
     return (AST.With cwctx cbody (cythonizeAnnotation annot))
   cythonize (AST.Pass annot) =
     return (AST.Pass (cythonizeAnnotation annot))
@@ -414,7 +496,7 @@ instance Cythonizable AST.Argument where
 instance Cythonizable AST.Handler where
   cythonize (AST.Handler clause suite annot) = do
     cclause <- cythonize clause
-    ctx <- get
+    ctx <- copyScope
     (csuite, _) <- runState (cythonizeArray suite) ctx
     return (AST.Handler cclause csuite (cythonizeAnnotation annot))
 
