@@ -471,10 +471,10 @@ instance Analyzable AST.Statement Statement where
   -- TODO Handle when assign_to is an array with multiple elements
   analyze (AST.Assign [to@AST.Var{}] expr annot) = do
     cexpr <- analyze expr
-    cto <- analyze to
     let ident = AST.ident_string $ AST.var_ident to
         exprTyp = maybe Unknown getType (fst $ AST.annot cexpr)
-    _ <- addVarType ident exprTyp
+    addVarType ident exprTyp
+    cto <- analyze to
     return (Statement $ AST.Assign [cto] cexpr annot)
   analyze (AST.Assign tos expr annot) = do
     cexpr <- analyze expr
