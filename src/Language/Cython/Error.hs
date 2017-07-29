@@ -3,6 +3,7 @@
 module Language.Cython.Error where
 
 import Data.Data
+
 import Language.Python.Common.Pretty
 
 data Error p =
@@ -21,8 +22,17 @@ errVarNotFound loc ident =
 
 errVarAlreadyDeclared :: p -> String -> Error p
 errVarAlreadyDeclared loc ident =
-  Error loc $ "Variable " ++ ident ++ " has already been declared or bound"
+  Error loc $ "Variable " ++ ident ++ " has already been declared"
+
+errVarAlreadyBound :: p -> String -> Error p
+errVarAlreadyBound loc ident =
+  Error loc $ "Variable " ++ ident
+    ++ " can not be both globally and non locally bound"
 
 errNotAllowedInGlobalScope :: p -> String -> Error p
 errNotAllowedInGlobalScope loc action =
   Error loc $ action ++ " from the global scope are not allowed"
+
+errVariableShouldHoldRef :: p -> String -> Error p
+errVariableShouldHoldRef loc ident =
+  Error loc $ "Node of variable " ++ ident ++ " should hold a reference"

@@ -1,6 +1,8 @@
 n = 0
 if n != 1:
     str = "test"
-    print str
+    n = 1
+    print(str)
 str = 2
-print str
+n = 42
+print(str)
