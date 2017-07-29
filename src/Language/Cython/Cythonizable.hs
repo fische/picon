@@ -22,6 +22,7 @@ import Language.Cython.Error
 
 type State annot = ContextState Context annot
 
+-- TODO Use CythonType as annotation instead of TypeAnnotation
 data Context =
   Context {
     inGlobalScope :: Bool,
@@ -226,9 +227,6 @@ instance Cythonizable Statement where
     cname <- cythonize name
     cval <- cythonizeMaybe val
     return (CDef cname cval (cythonizeAnnotation annot))
-  cythonize (CDefSuite suite annot) = do
-    csuite <- cythonizeArray suite
-    return (CDefSuite csuite (cythonizeAnnotation annot))
   cythonize (Statement (AST.Assign [to@AST.Var{}] expr annot)) = do
     cexpr <- cythonize expr
     cto <- cythonize to
