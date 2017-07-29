@@ -56,7 +56,7 @@ openScope = do
     inGlobalScope = False,
     localStash = Map.empty,
     localVars = Map.empty,
-    globalVars =
+    outerVars =
       Map.unions [(localStash ctx), (localVars ctx), (outerVars ctx)]
   } ctx{
     inGlobalScope = False,
