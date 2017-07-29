@@ -42,7 +42,7 @@ empty = Context {
   options = Options{}
 }
 
-getLocalRefTypes :: Map.Map String a -> Ref -> Maybe a
+getLocalRefTypes :: (Show a) => Map.Map String a -> Ref -> Maybe a
 getLocalRefTypes toResolve (LocalRef ident) = Map.lookup ident toResolve
 getLocalRefTypes _ _ = Nothing
 
@@ -53,9 +53,8 @@ mergeLocalScope ctx localScope =
         Map.partition isLocal localScope -- TODO Resolve references to innerLocals
       (innerBoundGlobals, innerBoundNonLocals) =
         Map.partition isGlobal innerBindings
-      mergeBinding old new = (cytype new) ++ old
       newOuters =
-        Map.intersectionWith mergeBinding (outerVars ctx) innerBoundNonLocals
+        Map.unionWith (++) (fmap cytype innerBoundNonLocals) (outerVars ctx)
       newGlobals =
         Map.unionWith (++) (fmap cytype innerBoundGlobals) (globalVars ctx)
 
@@ -64,8 +63,10 @@ mergeLocalScope ctx localScope =
 
       -- Resolve references to variables from the local scope
       resolve ident binding = do
-        resolvedTypes <- resolveLocalRefs'
+        resolvedTypes <- resolveRefs
           (fmap cytype . getLocalRefTypes innerLocals) ident $ cytype binding
+        st <- get
+        put $ Map.insert (LocalRef ident) resolvedTypes st
         return resolvedTypes
       resolvedLocals = evalState (mapWithKey resolve innerLocals) Map.empty
   in (resolvedLocals, ctx{
@@ -226,19 +227,11 @@ updateRefs isRightRefType isCurrLocalVar ctx =
     outerVars = outers
   }
 
-resolveLocalRefs' :: (Ref -> Maybe [TypeAnnotation]) -> String ->
-  [TypeAnnotation] -> ResolverState [TypeAnnotation]
-resolveLocalRefs' maybeResolve ident types = do
-  resolvedTypes <- resolveRefs maybeResolve ident types
-  st <- get
-  put $ Map.insert (LocalRef ident) resolvedTypes st
-  return resolvedTypes
-
 resolveLocalRefs :: Map.Map String [TypeAnnotation] -> Context -> Context
 resolveLocalRefs toResolve ctx =
-  let resolvedOuters = evalState (mapWithKey (resolveLocalRefs'
+  let resolvedOuters = evalState (mapWithKey (resolveRefs
         (getLocalRefTypes toResolve)) (outerVars ctx)) Map.empty
-      resolvedGlobals = evalState (mapWithKey (resolveLocalRefs'
+      resolvedGlobals = evalState (mapWithKey (resolveRefs
         (getLocalRefTypes toResolve)) (globalVars ctx)) Map.empty
   in ctx{
     globalVars = resolvedGlobals,
@@ -255,7 +248,7 @@ mergeCopy innerCtx = do
       resolvedInner = resolveLocalRefs toResolve mergedInner
 
       resolve ident binding = do
-        resolvedTypes <- resolveLocalRefs' (getLocalRefTypes toResolve) ident $
+        resolvedTypes <- resolveRefs (getLocalRefTypes toResolve) ident $
           cytype binding
         return binding{cytype = resolvedTypes}
       resolvedLocalScope = evalState (mapWithKey resolve newLocalScope)
@@ -313,7 +306,13 @@ mergeScope innerCtx = do
 mergeModule :: Context -> State annot (Map.Map String [TypeAnnotation])
 mergeModule innerCtx =
   let globals = localVars innerCtx -- TODO Resolve references to globals
-  in return $ fmap cytype globals
+      resolve ident binding = do
+        let toResolve = (fmap cytype . getLocalRefTypes globals)
+        resolvedTypes <- resolveRefs toResolve ident $ cytype binding
+        return binding{cytype = resolvedTypes}
+      resolvedGlobals = evalState (mapWithKey resolve globals)
+        Map.empty
+  in return $ fmap cytype resolvedGlobals
 
 
 
