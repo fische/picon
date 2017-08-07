@@ -27,10 +27,10 @@ data Context =
   Context {
     inGlobalScope :: Bool,
     options :: Options,
-    globalVars :: Map.Map String [TypeAnnotation],
-    outerVars :: Map.Map String [TypeAnnotation],
+    globalScope :: Map.Map String [TypeAnnotation],
+    outerScope :: Map.Map String [TypeAnnotation],
     localStash :: Map.Map String [TypeAnnotation],
-    localVars :: Map.Map String [TypeAnnotation]
+    localScope :: Map.Map String [TypeAnnotation]
   }
   deriving (Eq,Ord,Show,Typeable,Data)
 
@@ -38,10 +38,10 @@ empty :: Context
 empty = Context {
   inGlobalScope = False,
   options = Options{},
-  globalVars = Map.empty,
-  outerVars = Map.empty,
+  globalScope = Map.empty,
+  outerScope = Map.empty,
   localStash = Map.empty,
-  localVars = Map.empty
+  localScope = Map.empty
 }
 
 openBlock :: State annot Context
@@ -55,21 +55,21 @@ openFunction = do
   return $ bool ctx{
     inGlobalScope = False,
     localStash = Map.empty,
-    localVars = Map.empty,
-    outerVars =
-      Map.unions [(localStash ctx), (localVars ctx), (outerVars ctx)]
+    localScope = Map.empty,
+    outerScope =
+      Map.unions [(localStash ctx), (localScope ctx), (outerScope ctx)]
   } ctx{
     inGlobalScope = False,
     localStash = Map.empty,
-    localVars = Map.empty,
-    globalVars =
-      Map.unions [(localStash ctx), (localVars ctx), (globalVars ctx)]
+    localScope = Map.empty,
+    globalScope =
+      Map.unions [(localStash ctx), (localScope ctx), (globalScope ctx)]
   } (inGlobalScope ctx)
 
 getRefTypes :: Context -> Ref -> Maybe [TypeAnnotation]
-getRefTypes ctx (LocalRef ident) = Map.lookup ident (localVars ctx)
-getRefTypes ctx (NonLocalRef ident) = Map.lookup ident (outerVars ctx)
-getRefTypes ctx (GlobalRef ident) = Map.lookup ident (globalVars ctx)
+getRefTypes ctx (LocalRef ident) = Map.lookup ident (localScope ctx)
+getRefTypes ctx (NonLocalRef ident) = Map.lookup ident (outerScope ctx)
+getRefTypes ctx (GlobalRef ident) = Map.lookup ident (globalScope ctx)
 
 mergeLocalScope :: Context -> Map.Map String [TypeAnnotation] -> Context
 mergeLocalScope ctx locals =
@@ -88,7 +88,7 @@ unstashLocal loc ident = do
     (throwE $ errVarNotFound loc ident)
     (\types -> do
       put ctx{
-        localVars = Map.insert ident types (localVars ctx),
+        localScope = Map.insert ident types (localScope ctx),
         localStash = newStash
       }
       return types)
