@@ -469,7 +469,7 @@ instance Analyzable AST.Statement Statement where
   analyze (AST.Assign [to@AST.Var{}] expr annot) = do
     cexpr <- analyze expr
     let ident = AST.ident_string $ AST.var_ident to
-        exprTyp = maybe Unknown getType (fst $ AST.annot cexpr)
+        exprTyp = maybe (Const $ PythonObject) getType (fst $ AST.annot cexpr)
     addVarType ident exprTyp
     cto <- analyze to
     return (Statement $ AST.Assign [cto] cexpr annot)

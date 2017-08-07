@@ -43,8 +43,7 @@ isGlobalRef _ = False
 
 data TypeAnnotation =
   Const CythonType |
-  Ref Ref |
-  Unknown
+  Ref Ref
   deriving (Eq,Ord,Show,Typeable,Data)
 
 isRef :: TypeAnnotation -> Bool
@@ -62,4 +61,4 @@ data CythonAnnotation =
 
 getType :: CythonAnnotation -> TypeAnnotation
 getType (Type t) = t
-getType _ = Unknown
+getType _ = (Const $ PythonObject)
