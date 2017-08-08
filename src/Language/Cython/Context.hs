@@ -7,7 +7,6 @@ module Language.Cython.Context (
   isLocal,
   isGlobal,
   isNonLocal,
-  mapWithKey,
   resolveTypes,
   resolveRefs,
   Options(..)
@@ -48,19 +47,6 @@ isNonLocal _ = False
 isGlobal :: Binding -> Bool
 isGlobal (Global _) = True
 isGlobal _ = False
-
-mapWithKey' :: (Monad m) => (k -> a -> m b) -> [(k, a)] -> m [(k, b)]
-mapWithKey' _ [] = return []
-mapWithKey' f ((k, v):tl) = do
-  newValue <- f k v
-  newTail <- mapWithKey' f tl
-  return ((k, newValue) : newTail)
-
-mapWithKey :: (Ord k, Monad m) => (k -> a -> m b) -> Map.Map k a ->
-  m (Map.Map k b)
-mapWithKey f m = do
-  result <- mapWithKey' f $ Map.toList m
-  return (Map.fromList result)
 
 resolveTypes :: annot -> (Ref -> Maybe [CythonType]) -> String ->
   [TypeAnnotation] -> Except (Error annot) [CythonType]

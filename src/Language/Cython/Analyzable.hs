@@ -21,6 +21,8 @@ import Language.Cython.AST
 import Language.Cython.Annotation
 import Language.Cython.Type
 
+import Monadic.Map
+
 type State annot = ContextState Context annot
 
 data Context =

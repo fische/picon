@@ -21,6 +21,8 @@ import Language.Cython.AST
 import Language.Cython.Context
 import Language.Cython.Error
 
+import Monadic.Map
+
 type State annot = ContextState Context annot
 
 data Context =
