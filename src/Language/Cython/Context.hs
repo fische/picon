@@ -1,8 +1,6 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 
 module Language.Cython.Context (
-  ContextState,
-  Language.Cython.Context.runState,
   Binding(..),
   isLocal,
   isGlobal,
@@ -21,13 +19,6 @@ import Control.Monad.Trans.Except
 import Language.Cython.Type
 import Language.Cython.Annotation
 import Language.Cython.Error
-
-type ContextState ctx annot = ExceptT (Error annot) (State ctx)
-
-runState :: ContextState ctx annot a -> ctx -> ContextState ctx annot (a, ctx)
-runState s c = do
-  let (newState, newCtx) = Control.Monad.State.runState (runExceptT s) c
-  either throwE (\r -> return (r, newCtx)) newState
 
 -- TODO NonLocal and Global should hold a reference instead of a copy
 data Binding =

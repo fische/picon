@@ -23,7 +23,9 @@ import Language.Cython.Type
 
 import Monadic.Map
 
-type State annot = ContextState Context annot
+import State
+
+type ContextState annot = State Context annot
 
 data Context =
   Context {
@@ -77,12 +79,12 @@ mergeLocalScope ctx scope =
     globalScope = newGlobals
   })
 
-openBlock :: State annot Context
+openBlock :: ContextState annot Context
 openBlock = do
   ctx <- get
   return ctx
 
-openFunction :: State annot Context
+openFunction :: ContextState annot Context
 openFunction = do
   ctx <- openBlock
   let mergedCtx = snd $ mergeLocalScope ctx (localScope ctx)
@@ -100,7 +102,7 @@ openFunction = do
     localScope = Map.empty
   })
 
-openModule :: State annot Context
+openModule :: ContextState annot Context
 openModule = do
   ctx <- get
   return (ctx{
@@ -115,7 +117,7 @@ getBindingRef ident (Local _) = LocalRef ident
 getBindingRef ident (NonLocal _) = NonLocalRef ident
 getBindingRef ident (Global _) = GlobalRef ident
 
-getIdentRef :: String -> State annot Ref
+getIdentRef :: String -> ContextState annot Ref
 getIdentRef ident = do
   ctx <- get
   let inLocalScope = Map.lookup ident (localScope ctx)
@@ -125,7 +127,7 @@ getIdentRef ident = do
     (getBindingRef ident)
     inLocalScope
 
-addVarType :: String -> TypeAnnotation -> State annot ()
+addVarType :: String -> TypeAnnotation -> ContextState annot ()
 addVarType ident typ = do
   ctx <- get
   let insertBinding _ old = old{ cytype = (typ : (cytype old)) }
@@ -135,7 +137,7 @@ addVarType ident typ = do
   put ctx{localScope = newLocals}
 
 bindGlobalVars' :: annot -> Context -> [String] ->
-  State annot Context
+  ContextState annot Context
 bindGlobalVars' _ ctx [] = return ctx
 bindGlobalVars' loc ctx (ident:tl) =
   let locals = localScope ctx
@@ -155,7 +157,7 @@ bindGlobalVars' loc ctx (ident:tl) =
           bindGlobalVars' loc ctx tl)
     found
 
-bindGlobalVars :: annot -> [String] -> State annot ()
+bindGlobalVars :: annot -> [String] -> ContextState annot ()
 bindGlobalVars loc idents = do
   ctx <- get
   if inGlobalScope ctx
@@ -167,7 +169,7 @@ bindGlobalVars loc idents = do
       return ()
 
 bindNonLocalVars' :: annot -> Context -> [String] ->
-  State annot Context
+  ContextState annot Context
 bindNonLocalVars' _ ctx [] = return ctx
 bindNonLocalVars' loc ctx (ident:tl) =
   let locals = localScope ctx
@@ -194,7 +196,7 @@ bindNonLocalVars' loc ctx (ident:tl) =
     found
 
 
-bindNonLocalVars :: annot -> [String] -> State annot ()
+bindNonLocalVars :: annot -> [String] -> ContextState annot ()
 bindNonLocalVars loc idents = do
   ctx <- get
   if inGlobalScope ctx
@@ -240,7 +242,7 @@ resolveLocalRefs toResolve ctx =
     outerScope = resolvedOuters
   }
 
-mergeBlock :: Context -> State annot (Map.Map String [TypeAnnotation])
+mergeBlock :: Context -> ContextState annot (Map.Map String [TypeAnnotation])
 mergeBlock innerCtx = do
   currCtx <- get
   let currLocals = localScope currCtx
@@ -263,7 +265,7 @@ mergeBlock innerCtx = do
   }
   return toResolve
 
-mergeFunction :: Context -> State annot (Map.Map String [TypeAnnotation])
+mergeFunction :: Context -> ContextState annot (Map.Map String [TypeAnnotation])
 mergeFunction innerCtx = do
   currCtx <- get
   let innerScope = (localScope innerCtx)
@@ -305,7 +307,7 @@ mergeFunction innerCtx = do
     (inGlobalScope currCtx)
   return toResolve
 
-mergeModule :: Context -> State annot (Map.Map String [TypeAnnotation])
+mergeModule :: Context -> ContextState annot (Map.Map String [TypeAnnotation])
 mergeModule innerCtx =
   let globals = localScope innerCtx
       resolve ident binding = do
@@ -320,10 +322,10 @@ mergeModule innerCtx =
 
 class Analyzable t c where
   analyze :: t (Maybe CythonAnnotation, SrcSpan) ->
-    State SrcSpan (c (Maybe CythonAnnotation, SrcSpan))
+    ContextState SrcSpan (c (Maybe CythonAnnotation, SrcSpan))
 
 analyzeArray :: (Analyzable t c) => [t (Maybe CythonAnnotation, SrcSpan)] ->
-  State SrcSpan [c (Maybe CythonAnnotation, SrcSpan)]
+  ContextState SrcSpan [c (Maybe CythonAnnotation, SrcSpan)]
 analyzeArray [] = return []
 analyzeArray (hd:tl) = do
   rhd <- analyze hd
@@ -331,14 +333,14 @@ analyzeArray (hd:tl) = do
   return (rhd:rtl)
 
 analyzeSuite :: [AST.Statement (Maybe CythonAnnotation, SrcSpan)] ->
-  State SrcSpan (Suite (Maybe CythonAnnotation, SrcSpan))
+  ContextState SrcSpan (Suite (Maybe CythonAnnotation, SrcSpan))
 analyzeSuite s = do
   arr <- analyzeArray s
   return (Suite arr (Nothing, SpanEmpty))
 
 analyzeMaybe :: (Analyzable t c) =>
   Maybe (t (Maybe CythonAnnotation, SrcSpan)) ->
-  State SrcSpan (Maybe (c (Maybe CythonAnnotation, SrcSpan)))
+  ContextState SrcSpan (Maybe (c (Maybe CythonAnnotation, SrcSpan)))
 analyzeMaybe (Just m) = do
   r <- analyze m
   return (Just r)
@@ -347,7 +349,7 @@ analyzeMaybe Nothing = return Nothing
 analyzeGuards :: (Analyzable t c) =>
   [(t (Maybe CythonAnnotation, SrcSpan),
     AST.Suite (Maybe CythonAnnotation, SrcSpan))] ->
-  State SrcSpan
+  ContextState SrcSpan
     [(c (Maybe CythonAnnotation, SrcSpan),
       Suite (Maybe CythonAnnotation, SrcSpan))]
 analyzeGuards [] = return []
@@ -363,7 +365,7 @@ analyzeGuards ((f,s):tl) = do
 analyzeContext :: (Analyzable t c) =>
   [(t (Maybe CythonAnnotation, SrcSpan),
     Maybe (t (Maybe CythonAnnotation, SrcSpan)))] ->
-  State SrcSpan [(c (Maybe CythonAnnotation, SrcSpan),
+  ContextState SrcSpan [(c (Maybe CythonAnnotation, SrcSpan),
     Maybe (c (Maybe CythonAnnotation, SrcSpan)))]
 analyzeContext [] = return []
 analyzeContext ((f,s):tl) = do

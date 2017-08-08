@@ -23,7 +23,9 @@ import Language.Cython.Error
 
 import Monadic.Map
 
-type State annot = ContextState Context annot
+import State
+
+type ContextState annot = State Context annot
 
 data Context =
   Context {
@@ -46,12 +48,12 @@ empty = Context {
   localScope = Map.empty
 }
 
-openBlock :: State annot Context
+openBlock :: ContextState annot Context
 openBlock = do
   ctx <- get
   return ctx
 
-openFunction :: State annot Context
+openFunction :: ContextState annot Context
 openFunction = do
   ctx <- openBlock
   return $ bool ctx{
@@ -73,7 +75,7 @@ getRefTypes ctx (LocalRef ident) = Map.lookup ident (localScope ctx)
 getRefTypes ctx (NonLocalRef ident) = Map.lookup ident (outerScope ctx)
 getRefTypes ctx (GlobalRef ident) = Map.lookup ident (globalScope ctx)
 
-unstashLocal :: annot -> String -> State annot [CythonType]
+unstashLocal :: annot -> String -> ContextState annot [CythonType]
 unstashLocal loc ident = do
   ctx <- get
   let remove _ _ = Nothing
@@ -92,10 +94,10 @@ unstashLocal loc ident = do
 
 class Cythonizable t where
   cythonize :: t (Maybe CythonAnnotation, SrcSpan) ->
-    State SrcSpan (t (Maybe CythonType, SrcSpan))
+    ContextState SrcSpan (t (Maybe CythonType, SrcSpan))
 
 cythonizeArray :: (Cythonizable c) => [c (Maybe CythonAnnotation, SrcSpan)] ->
-  State SrcSpan [c (Maybe CythonType, SrcSpan)]
+  ContextState SrcSpan [c (Maybe CythonType, SrcSpan)]
 cythonizeArray [] = return []
 cythonizeArray (hd:tl) = do
   rhd <- cythonize hd
@@ -104,7 +106,7 @@ cythonizeArray (hd:tl) = do
 
 cythonizeMaybe :: (Cythonizable c) =>
   Maybe (c (Maybe CythonAnnotation, SrcSpan)) ->
-  State SrcSpan (Maybe (c (Maybe CythonType, SrcSpan)))
+  ContextState SrcSpan (Maybe (c (Maybe CythonType, SrcSpan)))
 cythonizeMaybe (Just c) = do
   rc <- cythonize c
   return (Just rc)
@@ -113,7 +115,7 @@ cythonizeMaybe Nothing = return Nothing
 cythonizeGuards :: (Cythonizable c) =>
   [(c (Maybe CythonAnnotation, SrcSpan),
     Suite (Maybe CythonAnnotation, SrcSpan))]
-  -> State SrcSpan
+  -> ContextState SrcSpan
       [(c (Maybe CythonType, SrcSpan),
         Suite (Maybe CythonType, SrcSpan))]
 cythonizeGuards [] = return []
@@ -127,7 +129,7 @@ cythonizeGuards ((f,s):tl) = do
 cythonizePythonGuards :: (Cythonizable c) =>
   [(c (Maybe CythonAnnotation, SrcSpan),
     AST.Suite (Maybe CythonAnnotation, SrcSpan))] ->
-  State SrcSpan
+  ContextState SrcSpan
       [(c (Maybe CythonType, SrcSpan),
         AST.Suite (Maybe CythonType, SrcSpan))]
 cythonizePythonGuards [] = return []
@@ -141,7 +143,7 @@ cythonizePythonGuards ((f,s):tl) = do
 cythonizeContext :: (Cythonizable c) =>
   [(c (Maybe CythonAnnotation, SrcSpan),
     Maybe (c (Maybe CythonAnnotation, SrcSpan)))] ->
-  State SrcSpan [(c (Maybe CythonType, SrcSpan),
+  ContextState SrcSpan [(c (Maybe CythonType, SrcSpan),
     Maybe (c (Maybe CythonType, SrcSpan)))]
 cythonizeContext [] = return []
 cythonizeContext ((f,s):tl) = do
