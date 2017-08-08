@@ -8,7 +8,7 @@ module Language.Cython.Context (
   isGlobal,
   isNonLocal,
   mapWithKey,
-  ResolverState,
+  resolveTypes,
   resolveRefs,
   Options(..)
 ) where
@@ -19,6 +19,7 @@ import Data.Data
 import Control.Monad.State
 import Control.Monad.Trans.Except
 
+import Language.Cython.Type
 import Language.Cython.Annotation
 import Language.Cython.Error
 
@@ -61,11 +62,26 @@ mapWithKey f m = do
   result <- mapWithKey' f $ Map.toList m
   return (Map.fromList result)
 
-type ResolverState = State (Map.Map Ref [TypeAnnotation])
+resolveTypes :: annot -> (Ref -> Maybe [CythonType]) -> String ->
+  [TypeAnnotation] -> Except (Error annot) [CythonType]
+resolveTypes _ _ _ [] = return []
+resolveTypes loc maybeResolve ident ((Ref ref):tl) = do
+  let refToString (GlobalRef r) = "global variable " ++ r
+      refToString (NonLocalRef r) = "nonlocal variable " ++ r
+      refToString (LocalRef r) = "local variable " ++ r
+  newHead <- maybe
+    (throwE $ errReferenceNotFound loc (refToString ref))
+    return
+    (maybeResolve ref)
+  newTail <- resolveTypes loc maybeResolve ident tl
+  return (newHead ++ newTail)
+resolveTypes loc maybeResolve ident ((Const hd):tl) = do
+  newTail <- resolveTypes loc maybeResolve ident tl
+  return (hd:newTail)
 
 -- TODO Handle cycling referencing
 resolveRefs :: (Ref -> Maybe [TypeAnnotation]) -> String -> [TypeAnnotation] ->
-  ResolverState [TypeAnnotation]
+  State (Map.Map Ref [TypeAnnotation]) [TypeAnnotation]
 resolveRefs _ _ [] = return []
 resolveRefs maybeResolve ident (hd@(Ref ref):tl) = do
   st <- get
@@ -76,8 +92,8 @@ resolveRefs maybeResolve ident (hd@(Ref ref):tl) = do
             resolved <- resolveRefs maybeResolve ident var
             put $ Map.insert ref resolved st
             return resolved
-      in maybe resolve return $ Map.lookup ref st) $
-    maybeResolve ref
+      in maybe resolve return $ Map.lookup ref st)
+    (maybeResolve ref)
   newTail <- resolveRefs maybeResolve ident tl
   return (newHead ++ newTail)
 resolveRefs maybeResolve ident (hd:tl) = do

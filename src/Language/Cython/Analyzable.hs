@@ -275,9 +275,9 @@ mergeFunction innerCtx = do
         updateRefs (bool isNonLocalRef isGlobalRef (inGlobalScope currCtx))
           isCurrentLocalVar resolvedInner
 
-      mergeTypes old new = new ++ old
-      mergeBindings old new =
-        old{cytype = mergeTypes (cytype old) (cytype new)}
+      joinTypeAnnots old new = new ++ old
+      joinBindings old new =
+        old{cytype = joinTypeAnnots (cytype old) (cytype new)}
 
   put $ bool
     -- Split updated variables in local and outer scope if not in global scope
@@ -285,19 +285,19 @@ mergeFunction innerCtx = do
            Map.partitionWithKey (inScope currLocals) (outerScope updatedInner)
 
          newGlobals =
-           Map.unionWith mergeTypes (globalScope currCtx)
+           Map.unionWith joinTypeAnnots (globalScope currCtx)
              (globalScope updatedInner)
          newOuters =
-           Map.unionWith mergeTypes (outerScope currCtx) updatedOuters
+           Map.unionWith joinTypeAnnots (outerScope currCtx) updatedOuters
 
     in currCtx{
-      localScope = Map.unionWith mergeBindings (localScope currCtx)
+      localScope = Map.unionWith joinBindings (localScope currCtx)
         (Local <$> updatedLocals),
       outerScope = newOuters,
       globalScope = newGlobals
     })
     (currCtx{
-      localScope = Map.unionWith mergeBindings (localScope currCtx)
+      localScope = Map.unionWith joinBindings (localScope currCtx)
         (Local <$> (globalScope updatedInner))
     })
     (inGlobalScope currCtx)

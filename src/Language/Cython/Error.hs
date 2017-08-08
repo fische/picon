@@ -36,3 +36,11 @@ errNotAllowedInGlobalScope loc action =
 errVariableShouldHoldRef :: p -> String -> Error p
 errVariableShouldHoldRef loc ident =
   Error loc $ "Node of variable " ++ ident ++ " should hold a reference"
+
+errReferenceNotFound :: p -> String -> Error p
+errReferenceNotFound loc ident =
+  Error loc $ "Reference to " ++ ident ++ " was not found"
+
+errNotSupported :: p -> String -> Error p
+errNotSupported loc feature =
+  Error loc $ feature ++ " is not supported for the moment"

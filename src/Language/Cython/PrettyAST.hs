@@ -7,18 +7,17 @@ import Language.Python.Common.Pretty
 import Language.Python.Common.PrettyAST ()
 import Language.Cython.AST
 import Language.Cython.Type
-import Language.Cython.Annotation
 
 indent :: Doc -> Doc
 indent doc = nest 4 doc
 
-instance Pretty (Module (Maybe TypeAnnotation, annot)) where
+instance Pretty (Module (Maybe CythonType, annot)) where
   pretty (Module suite _) = pretty suite
 
-instance Pretty (Suite (Maybe TypeAnnotation, annot)) where
+instance Pretty (Suite (Maybe CythonType, annot)) where
   pretty (Suite stmts _) = vcat $ map pretty stmts
 
-optionalKeywordSuite :: String -> (Suite (Maybe TypeAnnotation, annot)) -> Doc
+optionalKeywordSuite :: String -> (Suite (Maybe CythonType, annot)) -> Doc
 optionalKeywordSuite _ (Suite [] _) = empty
 optionalKeywordSuite keyword stmts =
   text keyword <> colon $+$ indent (pretty stmts)
@@ -27,14 +26,14 @@ prettyOptionalList :: Pretty a => [a] -> Doc
 prettyOptionalList [] = empty
 prettyOptionalList list = parens $ commaList list
 
-prettyGuards :: [(AST.Expr (Maybe TypeAnnotation, annot),
-  Suite (Maybe TypeAnnotation, annot))] -> Doc
+prettyGuards :: [(AST.Expr (Maybe CythonType, annot),
+  Suite (Maybe CythonType, annot))] -> Doc
 prettyGuards [] = empty
 prettyGuards ((cond,body):guards) =
   text "elif" <+> pretty cond <> colon $+$ indent (pretty body) $+$
   prettyGuards guards
 
-instance Pretty (Statement (Maybe TypeAnnotation, annot)) where
+instance Pretty (Statement (Maybe CythonType, annot)) where
   pretty stmt@(While {}) =
     text "while" <+> pretty (while_cond stmt) <> colon $+$
     indent (pretty (while_body stmt)) $+$ optionalKeywordSuite "else" (while_else stmt)
@@ -69,15 +68,15 @@ instance Pretty (Statement (Maybe TypeAnnotation, annot)) where
     maybe empty (\e -> text "=" <+> pretty e) expr
   pretty (Statement s) = pretty s
 
-prettyWithContext :: (AST.Expr (Maybe TypeAnnotation, annot),
-  Maybe (AST.Expr (Maybe TypeAnnotation, annot))) -> Doc
+prettyWithContext :: (AST.Expr (Maybe CythonType, annot),
+  Maybe (AST.Expr (Maybe CythonType, annot))) -> Doc
 prettyWithContext (e, Nothing) = pretty e
 prettyWithContext (e, Just as) = pretty e <+> text "as" <+> pretty as
 
-prettyHandlers :: [Handler (Maybe TypeAnnotation, annot)] -> Doc
+prettyHandlers :: [Handler (Maybe CythonType, annot)] -> Doc
 prettyHandlers = foldr (\next rec -> pretty next $+$ rec) empty
 
-instance Pretty (Handler (Maybe TypeAnnotation, annot)) where
+instance Pretty (Handler (Maybe CythonType, annot)) where
   pretty (Handler { handler_clause = exceptClause, handler_suite = suite }) =
     pretty exceptClause <> colon $+$ indent (pretty suite)
 
@@ -103,7 +102,3 @@ instance Pretty (CythonType) where
   pretty Bytes = text "bytes"
   pretty Unicode = text "unicode"
   pretty PythonObject = text "object"
-
-instance Pretty (TypeAnnotation) where
-  pretty (Const typ) = pretty typ
-  pretty _ = text "object"

@@ -10,11 +10,12 @@ import qualified Data.Map.Strict as Map
 import Data.Data
 import Data.Bool
 
-import Control.Monad.State (get, put, evalState)
+import Control.Monad.State (get, put)
 import Control.Monad.Trans.Except
 
 import qualified Language.Python.Common.AST as AST
 import Language.Python.Common.SrcLocation (SrcSpan(..))
+import Language.Cython.Type
 import Language.Cython.Annotation
 import Language.Cython.AST
 import Language.Cython.Context
@@ -22,15 +23,14 @@ import Language.Cython.Error
 
 type State annot = ContextState Context annot
 
--- TODO Use CythonType as annotation instead of TypeAnnotation
 data Context =
   Context {
     inGlobalScope :: Bool,
     options :: Options,
-    globalScope :: Map.Map String [TypeAnnotation],
-    outerScope :: Map.Map String [TypeAnnotation],
-    localStash :: Map.Map String [TypeAnnotation],
-    localScope :: Map.Map String [TypeAnnotation]
+    globalScope :: Map.Map String [CythonType],
+    outerScope :: Map.Map String [CythonType],
+    localStash :: Map.Map String [CythonType],
+    localScope :: Map.Map String [CythonType]
   }
   deriving (Eq,Ord,Show,Typeable,Data)
 
@@ -66,20 +66,12 @@ openFunction = do
       Map.unions [(localStash ctx), (localScope ctx), (globalScope ctx)]
   } (inGlobalScope ctx)
 
-getRefTypes :: Context -> Ref -> Maybe [TypeAnnotation]
+getRefTypes :: Context -> Ref -> Maybe [CythonType]
 getRefTypes ctx (LocalRef ident) = Map.lookup ident (localScope ctx)
 getRefTypes ctx (NonLocalRef ident) = Map.lookup ident (outerScope ctx)
 getRefTypes ctx (GlobalRef ident) = Map.lookup ident (globalScope ctx)
 
-mergeLocalScope :: Context -> Map.Map String [TypeAnnotation] -> Context
-mergeLocalScope ctx locals =
-  let resolvedLocals =
-        evalState (mapWithKey (resolveRefs (getRefTypes ctx)) locals) Map.empty
-  in ctx{
-    localStash = resolvedLocals
-  }
-
-unstashLocal :: annot -> String -> State annot [TypeAnnotation]
+unstashLocal :: annot -> String -> State annot [CythonType]
 unstashLocal loc ident = do
   ctx <- get
   let remove _ _ = Nothing
@@ -98,10 +90,10 @@ unstashLocal loc ident = do
 
 class Cythonizable t where
   cythonize :: t (Maybe CythonAnnotation, SrcSpan) ->
-    State SrcSpan (t (Maybe TypeAnnotation, SrcSpan))
+    State SrcSpan (t (Maybe CythonType, SrcSpan))
 
 cythonizeArray :: (Cythonizable c) => [c (Maybe CythonAnnotation, SrcSpan)] ->
-  State SrcSpan [c (Maybe TypeAnnotation, SrcSpan)]
+  State SrcSpan [c (Maybe CythonType, SrcSpan)]
 cythonizeArray [] = return []
 cythonizeArray (hd:tl) = do
   rhd <- cythonize hd
@@ -110,7 +102,7 @@ cythonizeArray (hd:tl) = do
 
 cythonizeMaybe :: (Cythonizable c) =>
   Maybe (c (Maybe CythonAnnotation, SrcSpan)) ->
-  State SrcSpan (Maybe (c (Maybe TypeAnnotation, SrcSpan)))
+  State SrcSpan (Maybe (c (Maybe CythonType, SrcSpan)))
 cythonizeMaybe (Just c) = do
   rc <- cythonize c
   return (Just rc)
@@ -120,8 +112,8 @@ cythonizeGuards :: (Cythonizable c) =>
   [(c (Maybe CythonAnnotation, SrcSpan),
     Suite (Maybe CythonAnnotation, SrcSpan))]
   -> State SrcSpan
-      [(c (Maybe TypeAnnotation, SrcSpan),
-        Suite (Maybe TypeAnnotation, SrcSpan))]
+      [(c (Maybe CythonType, SrcSpan),
+        Suite (Maybe CythonType, SrcSpan))]
 cythonizeGuards [] = return []
 cythonizeGuards ((f,s):tl) = do
   cf <- cythonize f
@@ -134,8 +126,8 @@ cythonizePythonGuards :: (Cythonizable c) =>
   [(c (Maybe CythonAnnotation, SrcSpan),
     AST.Suite (Maybe CythonAnnotation, SrcSpan))] ->
   State SrcSpan
-      [(c (Maybe TypeAnnotation, SrcSpan),
-        AST.Suite (Maybe TypeAnnotation, SrcSpan))]
+      [(c (Maybe CythonType, SrcSpan),
+        AST.Suite (Maybe CythonType, SrcSpan))]
 cythonizePythonGuards [] = return []
 cythonizePythonGuards ((f,s):tl) = do
   cf <- cythonize f
@@ -147,8 +139,8 @@ cythonizePythonGuards ((f,s):tl) = do
 cythonizeContext :: (Cythonizable c) =>
   [(c (Maybe CythonAnnotation, SrcSpan),
     Maybe (c (Maybe CythonAnnotation, SrcSpan)))] ->
-  State SrcSpan [(c (Maybe TypeAnnotation, SrcSpan),
-    Maybe (c (Maybe TypeAnnotation, SrcSpan)))]
+  State SrcSpan [(c (Maybe CythonType, SrcSpan),
+    Maybe (c (Maybe CythonType, SrcSpan)))]
 cythonizeContext [] = return []
 cythonizeContext ((f,s):tl) = do
   cf <- cythonize f
@@ -165,7 +157,12 @@ instance Cythonizable Module where
 instance Cythonizable Suite where
   cythonize (Suite stmts (Just (Locals locals), annot)) = do
     ctx <- get
-    put $ mergeLocalScope ctx locals
+    let resolved =
+          runExcept (mapWithKey (resolveTypes annot (getRefTypes ctx)) locals)
+    either
+      throwE
+      (\r -> put $ ctx{localStash = r})
+      resolved
     rstmts <- cythonizeArray stmts
     return (Suite rstmts (Nothing, annot))
   cythonize (Suite stmts (_, annot)) = do
@@ -232,8 +229,12 @@ instance Cythonizable Statement where
         ident = AST.ident_string $ AST.var_ident to
         cdef = do
           unstashed <- unstashLocal loc ident
-          let cannot = (Just $ head unstashed, loc)
-          return $ CDef (AST.var_ident cto) (Just cexpr) cannot
+          either
+            throwE
+            (\mergedTyp ->
+              let cannot = (Just mergedTyp, loc)
+              in return $ CDef (AST.var_ident cto) (Just cexpr) cannot)
+            (runExcept $ mergeTypes loc unstashed)
 
         reassign _ =
           let cannot = (Nothing, snd annot)

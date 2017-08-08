@@ -10,10 +10,10 @@ import Language.Cython.Cythonizable as Cythonizable
 import Language.Cython.Context
 import Language.Cython.AST
 import Language.Cython.Error
-import Language.Cython.Annotation
+import Language.Cython.Type
 
 cythonize :: Options -> AST.Module SrcSpan ->
-  Either (Error SrcSpan) (Module (Maybe TypeAnnotation, SrcSpan))
+  Either (Error SrcSpan) (Module (Maybe CythonType, SrcSpan))
 cythonize opts pymodule =
   let tree = fmap (\s -> (Nothing, s)) pymodule
       analysisCtx = Analyzable.empty{Analyzable.options = opts}
