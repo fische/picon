@@ -1,6 +1,11 @@
 {-# LANGUAGE DeriveDataTypeable, DeriveFunctor #-}
 
-module Language.Cython.AST where
+module Language.Cython.AST (
+  Module(..),
+  Suite(..),
+  Statement(..),
+  Handler(..)
+) where
 
 import Data.Data
 

@@ -1,331 +1,39 @@
-{-# LANGUAGE FlexibleInstances, MultiParamTypeClasses, DeriveDataTypeable #-}
+{-# LANGUAGE FlexibleInstances, MultiParamTypeClasses #-}
 
-module Language.Cython.Analyzable (
-  Analyzable(..),
-  Context(..),
-  empty
+module Analysis.Analyzable (
+  Analyzable(..)
 ) where
-
-import qualified Data.Map.Strict as Map
-import Data.Data
-import Data.Bool
-
-import Control.Monad.State (get, put, evalState)
-import Control.Monad.Trans.Except
 
 import qualified Language.Python.Common.AST as AST
 import Language.Python.Common.SrcLocation (SrcSpan(..))
-import Language.Cython.Error
-import Language.Cython.Context
 import Language.Cython.AST
-import Language.Cython.Annotation
 import Language.Cython.Type
 
-import Monadic.Map
+import Analysis.Context
+import Annotation
+import Type
 
 import State
 
-type ContextState annot = State Context annot
-
-data Context =
-  Context {
-    inGlobalScope :: Bool,
-    options :: Options,
-    globalScope :: Map.Map String [TypeAnnotation],
-    outerScope :: Map.Map String [TypeAnnotation],
-    localScope :: Map.Map String Binding
-  }
-  deriving (Eq,Ord,Show,Typeable,Data)
-
-empty :: Context
-empty = Context {
-  inGlobalScope = False,
-  options = Options{},
-  globalScope = Map.empty,
-  outerScope = Map.empty,
-  localScope = Map.empty
-}
-
-getLocalRefTypes :: (Show a) => Map.Map String a -> Ref -> Maybe a
-getLocalRefTypes toResolve (LocalRef ident) = Map.lookup ident toResolve
-getLocalRefTypes _ _ = Nothing
-
-mergeLocalScope :: Context -> Map.Map String Binding ->
-  (Map.Map String [TypeAnnotation], Context)
-mergeLocalScope ctx scope =
-  let (innerLocals, innerBindings) =
-        Map.partition isLocal scope
-      (innerBoundGlobals, innerBoundNonLocals) =
-        Map.partition isGlobal innerBindings
-      newOuters =
-        Map.unionWith (++) (fmap cytype innerBoundNonLocals) (outerScope ctx)
-      newGlobals =
-        Map.unionWith (++) (fmap cytype innerBoundGlobals) (globalScope ctx)
-
-      -- Reset updates to bindings
-      resetBindings = Map.map (\l -> l{cytype = []}) innerBindings
-
-      -- Resolve references to variables from the local scope
-      resolve ident binding = do
-        resolvedTypes <- resolveRefs
-          (fmap cytype . getLocalRefTypes innerLocals) ident $ cytype binding
-        st <- get
-        put $ Map.insert (LocalRef ident) resolvedTypes st
-        return resolvedTypes
-      resolvedLocals = evalState (mapWithKey resolve innerLocals) Map.empty
-  in (resolvedLocals, ctx{
-    localScope = Map.union innerLocals resetBindings,
-    outerScope = newOuters,
-    globalScope = newGlobals
-  })
-
-openBlock :: ContextState annot Context
-openBlock = do
-  ctx <- get
-  return ctx
-
-openFunction :: ContextState annot Context
-openFunction = do
-  ctx <- openBlock
-  let mergedCtx = snd $ mergeLocalScope ctx (localScope ctx)
-      locals = localScope mergedCtx
-      localGlobals = (locals, Map.empty)
-      partition = Map.partition isGlobal locals
-      (globals, outers) = bool partition localGlobals (inGlobalScope mergedCtx)
-      updatedGlobal = Map.union (fmap cytype globals) (globalScope mergedCtx)
-      updatedOuter = Map.union (fmap cytype outers) (outerScope mergedCtx)
-  put mergedCtx
-  return (mergedCtx{
-    inGlobalScope = False,
-    globalScope = Map.map (const []) updatedGlobal,
-    outerScope = Map.map (const []) updatedOuter,
-    localScope = Map.empty
-  })
-
-openModule :: ContextState annot Context
-openModule = do
-  ctx <- get
-  return (ctx{
-    inGlobalScope = True,
-    globalScope = Map.empty,
-    outerScope = Map.empty,
-    localScope = Map.empty
-  })
-
-getBindingRef :: String -> Binding -> Ref
-getBindingRef ident (Local _) = LocalRef ident
-getBindingRef ident (NonLocal _) = NonLocalRef ident
-getBindingRef ident (Global _) = GlobalRef ident
-
-getIdentRef :: String -> ContextState annot Ref
-getIdentRef ident = do
-  ctx <- get
-  let inLocalScope = Map.lookup ident (localScope ctx)
-      inOuterScope = Map.member ident (outerScope ctx)
-  return $ maybe
-    (bool (GlobalRef ident) (NonLocalRef ident) inOuterScope)
-    (getBindingRef ident)
-    inLocalScope
-
-addVarType :: String -> TypeAnnotation -> ContextState annot ()
-addVarType ident typ = do
-  ctx <- get
-  let insertBinding _ old = old{ cytype = (typ : (cytype old)) }
-      binding = Local [typ]
-      oldLocals = localScope ctx
-      newLocals = Map.insertWith insertBinding ident binding oldLocals
-  put ctx{localScope = newLocals}
-
-bindGlobalVars' :: annot -> Context -> [String] ->
-  ContextState annot Context
-bindGlobalVars' _ ctx [] = return ctx
-bindGlobalVars' loc ctx (ident:tl) =
-  let locals = localScope ctx
-      found = Map.lookup ident locals
-  in maybe
-    (bindGlobalVars' loc (ctx{
-      localScope = Map.insert ident (Global []) locals
-    }) tl)
-    (\var -> if isLocal var
-      then
-        -- TODO Handle when variable is already declared locally
-        throwE $ errVarAlreadyDeclared loc ident
-      else if isNonLocal var
-        then
-          throwE $ errVarAlreadyBound loc ident
-        else
-          bindGlobalVars' loc ctx tl)
-    found
-
-bindGlobalVars :: annot -> [String] -> ContextState annot ()
-bindGlobalVars loc idents = do
-  ctx <- get
-  if inGlobalScope ctx
-    then
-      throwE $ errNotAllowedInGlobalScope loc "Global bindings"
-    else do
-      newCtx <- bindGlobalVars' loc ctx idents
-      put newCtx
-      return ()
-
-bindNonLocalVars' :: annot -> Context -> [String] ->
-  ContextState annot Context
-bindNonLocalVars' _ ctx [] = return ctx
-bindNonLocalVars' loc ctx (ident:tl) =
-  let locals = localScope ctx
-      found = Map.lookup ident locals
-      checkAndInsert =
-        let outer = Map.member ident (outerScope ctx)
-        in bool
-          (throwE $ errVarNotFound loc ident)
-          (bindNonLocalVars' loc (ctx{
-              localScope = Map.insert ident (NonLocal []) locals
-          }) tl)
-          outer
-  in maybe
-    checkAndInsert
-    (\var -> if isLocal var
-      then
-        -- TODO Handle when variable is already declared locally
-        throwE $ errVarAlreadyDeclared loc ident
-      else if isGlobal var
-        then
-          throwE $ errVarAlreadyBound loc ident
-        else
-          bindNonLocalVars' loc ctx tl)
-    found
-
-
-bindNonLocalVars :: annot -> [String] -> ContextState annot ()
-bindNonLocalVars loc idents = do
-  ctx <- get
-  if inGlobalScope ctx
-    then
-      throwE $ errNotAllowedInGlobalScope loc "Nonlocal bindings"
-    else do
-      newCtx <- bindNonLocalVars' loc ctx idents
-      put newCtx
-      return ()
-
-inScope :: Map.Map String Binding -> String -> a -> Bool
-inScope scope ident _ = Map.member ident scope
-
-updateRefs' :: (Ref -> Bool) -> (String -> Bool) ->
-  [TypeAnnotation] -> [TypeAnnotation]
-updateRefs' _ _ [] = []
-updateRefs' isRightRefType isCurrLocalVar (hd@(Ref ref):tl) =
-  let refIdent = getRefIdentifier ref
-      changeToLocalRef = isRightRefType ref && isCurrLocalVar refIdent
-  in (bool hd (Ref $ LocalRef refIdent) changeToLocalRef):
-      (updateRefs' isRightRefType isCurrLocalVar tl)
-updateRefs' isRightRefType isCurrLocalVar (hd:tl) =
-  hd:(updateRefs' isRightRefType isCurrLocalVar tl)
-
-updateRefs :: (Ref -> Bool) -> (String -> Bool) -> Context -> Context
-updateRefs isRightRefType isCurrLocalVar ctx =
-  let update = updateRefs' isRightRefType isCurrLocalVar
-      globals = Map.map update (globalScope ctx)
-      outers = Map.map update (outerScope ctx)
-  in ctx{
-    globalScope = globals,
-    outerScope = outers
-  }
-
-resolveLocalRefs :: Map.Map String [TypeAnnotation] -> Context -> Context
-resolveLocalRefs toResolve ctx =
-  let resolvedOuters = evalState (mapWithKey (resolveRefs
-        (getLocalRefTypes toResolve)) (outerScope ctx)) Map.empty
-      resolvedGlobals = evalState (mapWithKey (resolveRefs
-        (getLocalRefTypes toResolve)) (globalScope ctx)) Map.empty
-  in ctx{
-    globalScope = resolvedGlobals,
-    outerScope = resolvedOuters
-  }
-
-mergeBlock :: Context -> ContextState annot (Map.Map String [TypeAnnotation])
-mergeBlock innerCtx = do
-  currCtx <- get
-  let currLocals = localScope currCtx
-      (newLocalScope, innerScope) =
-        Map.partitionWithKey (inScope currLocals) (localScope innerCtx)
-      (toResolve, mergedInner) = mergeLocalScope innerCtx innerScope
-      resolvedInner = resolveLocalRefs toResolve mergedInner
-
-      resolve ident binding = do
-        resolvedTypes <- resolveRefs (getLocalRefTypes toResolve) ident $
-          cytype binding
-        return binding{cytype = resolvedTypes}
-      resolvedLocalScope = evalState (mapWithKey resolve newLocalScope)
-        Map.empty
-
-  put currCtx{
-    localScope = resolvedLocalScope,
-    outerScope = (outerScope resolvedInner),
-    globalScope = (globalScope resolvedInner)
-  }
-  return toResolve
-
-mergeFunction :: Context -> ContextState annot (Map.Map String [TypeAnnotation])
-mergeFunction innerCtx = do
-  currCtx <- get
-  let innerScope = (localScope innerCtx)
-      (toResolve, mergedInner) = mergeLocalScope innerCtx innerScope
-      resolvedInner = resolveLocalRefs toResolve mergedInner
-
-      -- Update refs to current local variables
-      currLocals = Map.filter isLocal $ localScope currCtx
-      isCurrentLocalVar k = Map.member k currLocals
-      updatedInner =
-        updateRefs (bool isNonLocalRef isGlobalRef (inGlobalScope currCtx))
-          isCurrentLocalVar resolvedInner
-
-      joinTypeAnnots old new = new ++ old
-      joinBindings old new =
-        old{cytype = joinTypeAnnots (cytype old) (cytype new)}
-
-  put $ bool
-    -- Split updated variables in local and outer scope if not in global scope
-    (let (updatedLocals, updatedOuters) =
-           Map.partitionWithKey (inScope currLocals) (outerScope updatedInner)
-
-         newGlobals =
-           Map.unionWith joinTypeAnnots (globalScope currCtx)
-             (globalScope updatedInner)
-         newOuters =
-           Map.unionWith joinTypeAnnots (outerScope currCtx) updatedOuters
-
-    in currCtx{
-      localScope = Map.unionWith joinBindings (localScope currCtx)
-        (Local <$> updatedLocals),
-      outerScope = newOuters,
-      globalScope = newGlobals
-    })
-    (currCtx{
-      localScope = Map.unionWith joinBindings (localScope currCtx)
-        (Local <$> (globalScope updatedInner))
-    })
-    (inGlobalScope currCtx)
-  return toResolve
-
-mergeModule :: Context -> ContextState annot (Map.Map String [TypeAnnotation])
-mergeModule innerCtx =
-  let globals = localScope innerCtx
-      resolve ident binding = do
-        let toResolve = (fmap cytype . getLocalRefTypes globals)
-        resolvedTypes <- resolveRefs toResolve ident $ cytype binding
-        return binding{cytype = resolvedTypes}
-      resolvedGlobals = evalState (mapWithKey resolve globals)
-        Map.empty
-  in return $ fmap cytype resolvedGlobals
-
-
+getExprType :: AST.Expr a -> State Context annot Type
+getExprType AST.Var{AST.var_ident = ident} = do
+  ref <- getIdentRef $ AST.ident_string ident
+  return $ Ref ref
+getExprType AST.Int{} = return . Const . CType $ Signed Int
+getExprType AST.LongInt{} = return . Const . CType $ Signed Long
+getExprType AST.Float{} = return . Const . CType $ Signed Double
+getExprType AST.Bool{} = return . Const $ CType BInt
+getExprType AST.ByteStrings{} = return $ Const Bytes
+getExprType AST.Strings{} = return $ Const String
+getExprType AST.UnicodeStrings{} = return $ Const Unicode
+getExprType _ = return $ Const PythonObject
 
 class Analyzable t c where
   analyze :: t (Maybe CythonAnnotation, SrcSpan) ->
-    ContextState SrcSpan (c (Maybe CythonAnnotation, SrcSpan))
+    State Context SrcSpan (c (Maybe CythonAnnotation, SrcSpan))
 
 analyzeArray :: (Analyzable t c) => [t (Maybe CythonAnnotation, SrcSpan)] ->
-  ContextState SrcSpan [c (Maybe CythonAnnotation, SrcSpan)]
+  State Context SrcSpan [c (Maybe CythonAnnotation, SrcSpan)]
 analyzeArray [] = return []
 analyzeArray (hd:tl) = do
   rhd <- analyze hd
@@ -333,14 +41,14 @@ analyzeArray (hd:tl) = do
   return (rhd:rtl)
 
 analyzeSuite :: [AST.Statement (Maybe CythonAnnotation, SrcSpan)] ->
-  ContextState SrcSpan (Suite (Maybe CythonAnnotation, SrcSpan))
+  State Context SrcSpan (Suite (Maybe CythonAnnotation, SrcSpan))
 analyzeSuite s = do
   arr <- analyzeArray s
   return (Suite arr (Nothing, SpanEmpty))
 
 analyzeMaybe :: (Analyzable t c) =>
   Maybe (t (Maybe CythonAnnotation, SrcSpan)) ->
-  ContextState SrcSpan (Maybe (c (Maybe CythonAnnotation, SrcSpan)))
+  State Context SrcSpan (Maybe (c (Maybe CythonAnnotation, SrcSpan)))
 analyzeMaybe (Just m) = do
   r <- analyze m
   return (Just r)
@@ -349,7 +57,7 @@ analyzeMaybe Nothing = return Nothing
 analyzeGuards :: (Analyzable t c) =>
   [(t (Maybe CythonAnnotation, SrcSpan),
     AST.Suite (Maybe CythonAnnotation, SrcSpan))] ->
-  ContextState SrcSpan
+  State Context SrcSpan
     [(c (Maybe CythonAnnotation, SrcSpan),
       Suite (Maybe CythonAnnotation, SrcSpan))]
 analyzeGuards [] = return []
@@ -357,7 +65,7 @@ analyzeGuards ((f,s):tl) = do
   cf <- analyze f
   ctx <- openBlock
   (cs, suiteCtx) <- runState (analyzeSuite s) ctx
-  suiteLocals <- mergeBlock suiteCtx
+  suiteLocals <- closeBlock suiteCtx
   let suiteAnnot = (Just $ Locals suiteLocals, snd $ AST.annot cs)
   rtl <- analyzeGuards tl
   return ((cf, cs{suite_annot = suiteAnnot}):rtl)
@@ -365,7 +73,7 @@ analyzeGuards ((f,s):tl) = do
 analyzeContext :: (Analyzable t c) =>
   [(t (Maybe CythonAnnotation, SrcSpan),
     Maybe (t (Maybe CythonAnnotation, SrcSpan)))] ->
-  ContextState SrcSpan [(c (Maybe CythonAnnotation, SrcSpan),
+  State Context SrcSpan [(c (Maybe CythonAnnotation, SrcSpan),
     Maybe (c (Maybe CythonAnnotation, SrcSpan)))]
 analyzeContext [] = return []
 analyzeContext ((f,s):tl) = do
@@ -387,7 +95,7 @@ instance Analyzable AST.Module Module where
   analyze (AST.Module stmts) = do
     ctx <- openModule
     (rstmts, stmtsCtx) <- runState (analyzeSuite stmts) ctx
-    stmtsLocals <- mergeModule stmtsCtx
+    stmtsLocals <- closeModule stmtsCtx
     let stmtsAnnot = (Just $ Locals stmtsLocals, snd $ AST.annot rstmts)
     return (Module rstmts{suite_annot = stmtsAnnot} (Nothing, SpanEmpty))
 
@@ -429,9 +137,9 @@ instance Analyzable AST.Statement Statement where
     ccond <- analyze cond
     ctx <- openBlock
     (cbody, bodyCtx) <- runState (analyzeSuite body) ctx
-    bodyLocals <- mergeBlock bodyCtx
+    bodyLocals <- closeBlock bodyCtx
     (celse, elseCtx) <- runState (analyzeSuite e) ctx
-    elseLocals <- mergeBlock elseCtx
+    elseLocals <- closeBlock elseCtx
     let bodyAnnot = (Just $ Locals bodyLocals, snd $ AST.annot cbody)
         elseAnnot = (Just $ Locals elseLocals, snd $ AST.annot celse)
     return (While ccond cbody{suite_annot = bodyAnnot}
@@ -441,9 +149,9 @@ instance Analyzable AST.Statement Statement where
     cgen <- analyze gen
     ctx <- openBlock
     (cbody, bodyCtx) <- runState (analyzeSuite body) ctx
-    bodyLocals <- mergeBlock bodyCtx
+    bodyLocals <- closeBlock bodyCtx
     (celse, elseCtx) <- runState (analyzeSuite e) ctx
-    elseLocals <- mergeBlock elseCtx
+    elseLocals <- closeBlock elseCtx
     let bodyAnnot = (Just $ Locals bodyLocals, snd $ AST.annot cbody)
         elseAnnot = (Just $ Locals elseLocals, snd $ AST.annot celse)
     return (For ctargets cgen cbody{suite_annot = bodyAnnot}
@@ -453,12 +161,12 @@ instance Analyzable AST.Statement Statement where
     ctx <- openFunction
     (cargs, argsctx) <- runState (analyzeArray args) ctx
     (cbody, bodyCtx) <- runState (analyzeSuite body) argsctx
-    bodyLocals <- mergeFunction bodyCtx
+    bodyLocals <- closeFunction bodyCtx
     let bodyAnnot = (Just $ Locals bodyLocals, snd $ AST.annot cbody)
     return (Fun cname cargs result cbody{suite_annot = bodyAnnot} annot)
   analyze (AST.Class name args body annot) = do
     cname <- analyze name
-    ctx <- get
+    ctx <- openBlock
     (cargs, argsctx) <- runState (analyzeArray args) ctx
     (cbody, _) <- runState (analyzeSuite body) argsctx
     return (Class cname cargs cbody annot)
@@ -466,14 +174,14 @@ instance Analyzable AST.Statement Statement where
     cguards <- analyzeGuards guards
     ctx <- openBlock
     (celse, elseCtx) <- runState (analyzeSuite e) ctx
-    elseLocals <- mergeBlock elseCtx
+    elseLocals <- closeBlock elseCtx
     let elseAnnot = (Just $ Locals elseLocals, snd $ AST.annot celse)
     return (Conditional cguards celse{suite_annot = elseAnnot} annot)
   -- TODO Handle when assign_to is an array with multiple elements
   analyze (AST.Assign [to@AST.Var{}] expr annot) = do
     cexpr <- analyze expr
     let ident = AST.ident_string $ AST.var_ident to
-        exprTyp = maybe (Const $ PythonObject) getType (fst $ AST.annot cexpr)
+    exprTyp <- getExprType cexpr
     addVarType ident exprTyp
     cto <- analyze to
     return (Statement $ AST.Assign [cto] cexpr annot)
@@ -496,12 +204,12 @@ instance Analyzable AST.Statement Statement where
   analyze (AST.Try body excepts e fin annot) = do
     ctx <- openBlock
     (cbody, bodyCtx) <- runState (analyzeSuite body) ctx
-    bodyLocals <- mergeBlock bodyCtx
+    bodyLocals <- closeBlock bodyCtx
     cexcepts <- analyzeArray excepts
     (celse, elseCtx) <- runState (analyzeSuite e) ctx
-    elseLocals <- mergeBlock elseCtx
+    elseLocals <- closeBlock elseCtx
     (cfin, finCtx) <- runState (analyzeSuite fin) ctx
-    finLocals <- mergeBlock finCtx
+    finLocals <- closeBlock finCtx
     let bodyAnnot = (Just $ Locals bodyLocals, snd $ AST.annot cbody)
         elseAnnot = (Just $ Locals elseLocals, snd $ AST.annot celse)
         finAnnot = (Just $ Locals finLocals, snd $ AST.annot cfin)
@@ -514,7 +222,7 @@ instance Analyzable AST.Statement Statement where
     cwctx <- analyzeContext wctx
     ctx <- openBlock
     (cbody, bodyCtx) <- runState (analyzeSuite body) ctx
-    bodyLocals <- mergeBlock bodyCtx
+    bodyLocals <- closeBlock bodyCtx
     let bodyAnnot = (Just $ Locals bodyLocals, snd $ AST.annot cbody)
     return (With cwctx cbody{suite_annot = bodyAnnot} annot)
   analyze (AST.Pass annot) = return (Statement $ AST.Pass annot)
@@ -627,7 +335,7 @@ instance Analyzable AST.Handler Handler where
     cclause <- analyze clause
     ctx <- openBlock
     (csuite, suiteCtx) <- runState (analyzeSuite suite) ctx
-    suiteLocals <- mergeBlock suiteCtx
+    suiteLocals <- closeBlock suiteCtx
     let suiteAnnot = (Just $ Locals suiteLocals, snd $ AST.annot csuite)
     return (Handler cclause csuite{suite_annot = suiteAnnot} annot)
 
@@ -678,32 +386,29 @@ instance Analyzable AST.CompIter AST.CompIter where
     return (AST.IterIf citer annot)
 
 instance Analyzable AST.Expr AST.Expr where
-  analyze (AST.Var ident (_, annot)) = do
+  analyze (AST.Var ident annot) = do
     cident <- analyze ident
-    ref <- getIdentRef $ AST.ident_string ident
-    return (AST.Var cident (Just . Type . Ref $ ref, annot))
-  analyze (AST.Int val lit (_, annot)) =
-    return (AST.Int val lit (Just . Type . Const . CType $ Signed Int, annot))
-  analyze (AST.LongInt val lit (_, annot)) =
-    let typedAnnot = (Just . Type . Const . CType $ Signed Long, annot)
-    in return (AST.LongInt val lit typedAnnot)
-  analyze (AST.Float val lit (_, annot)) =
-    let typedAnnot = (Just . Type . Const . CType $ Signed Double, annot)
-    in return (AST.Float val lit typedAnnot)
+    return (AST.Var cident annot)
+  analyze (AST.Int val lit annot) =
+    return (AST.Int val lit annot)
+  analyze (AST.LongInt val lit annot) =
+    return (AST.LongInt val lit annot)
+  analyze (AST.Float val lit annot) =
+    return (AST.Float val lit annot)
   analyze (AST.Imaginary val lit annot) =
     return (AST.Imaginary val lit annot)
-  analyze (AST.Bool val (_, annot)) =
-    return (AST.Bool val (Just . Type . Const $ CType BInt, annot))
+  analyze (AST.Bool val annot) =
+    return (AST.Bool val annot)
   analyze (AST.None annot) =
     return (AST.None annot)
   analyze (AST.Ellipsis annot) =
     return (AST.Ellipsis annot)
-  analyze (AST.ByteStrings str (_, annot)) =
-    return (AST.ByteStrings str (Just . Type $ Const Bytes, annot))
-  analyze (AST.Strings str (_, annot)) =
-    return (AST.Strings str (Just . Type $ Const String, annot))
-  analyze (AST.UnicodeStrings str (_, annot)) =
-    return (AST.UnicodeStrings str (Just . Type $ Const Unicode, annot))
+  analyze (AST.ByteStrings str annot) =
+    return (AST.ByteStrings str annot)
+  analyze (AST.Strings str annot) =
+    return (AST.Strings str annot)
+  analyze (AST.UnicodeStrings str annot) =
+    return (AST.UnicodeStrings str annot)
   analyze (AST.Call fun args annot) = do
     cfun <- analyze fun
     cargs <- analyzeArray args
