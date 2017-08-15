@@ -13,6 +13,7 @@ module Scope (
 
 import qualified Data.Map.Strict as Map
 import Data.Maybe
+import Data.Bool
 import Monadic.Map
 
 import qualified Control.Monad.State as State
@@ -36,11 +37,18 @@ data Type =
 data Path =
   Node ((String, Int), Path) |
   Leaf
-  deriving (Eq,Ord)
+  deriving (Eq,Ord,Show)
 
 append :: Path -> Path -> Path
 append Leaf p2 = p2
 append (Node (idx, p1)) p2 = Node (idx, (append p1 p2))
+
+sub :: Path -> Path -> Path
+sub Leaf p = p
+sub _ Leaf = error "p1 is not subpath of p2"
+sub (Node(idx1, p1)) (Node(idx2, p2))
+  | idx1 == idx2 = sub p1 p2
+  | otherwise = error "p1 is not subpath of p2"
 
 data Scope =
   Module {
@@ -79,9 +87,9 @@ add' i p s (Just l) = do
   }:l)
 
 add :: String -> Scope -> Path -> Scope -> (Scope, Path)
-add ident sub p s =
+add ident body p s =
   let addToScope v = do
-        new <- alterM (add' ident p sub) ident (functions v)
+        new <- alterM (add' ident p body) ident (functions v)
         return $ v {
           functions = new
         }
@@ -149,15 +157,33 @@ getVariableReference i p s =
   let err = error ("variable " ++ i ++ " was not found")
   in fromMaybe err $ getVariableReference' i p s
 
-resolveType :: Scope -> Type -> Type
-resolveType s t@VarRef{identifier = i, refering = p} =
-  let r = get p s
+checkReferencePath' :: String -> Path -> Scope -> Bool
+checkReferencePath' _ Leaf _ = False
+checkReferencePath' i (Node((ident, idx), p)) s =
+  let err = error "next path level not found"
+      f l =
+        let func = l !! (reverseIndex l idx)
+        in checkReferencePath' i p func
+  in Map.member i (variables s) || maybe err f (Map.lookup ident (functions s))
+
+checkReferencePath :: String -> Path -> Scope -> Maybe a
+checkReferencePath i (Node((ident, idx), p)) s =
+  let err = error ("binding to variable " ++ i ++ " has been overriden")
+      f l = l !! (reverseIndex l idx)
+      childScope = maybe err f (Map.lookup ident (functions s))
+  in bool Nothing err $ checkReferencePath' i p childScope
+checkReferencePath _ Leaf _ = Nothing
+
+resolveType :: Path -> Scope -> Type -> Type
+resolveType funcPath s t@VarRef{identifier = i, refering = refPath} =
+  let r = get refPath s
       err = error ("variable " ++ i ++ " was not found")
       var = Map.findWithDefault err i (variables r)
   in t{
-    types = (getReferenceType i var):(types t)
+    types = fromMaybe ((getReferenceType i var):(types t)) $
+              checkReferencePath i (sub refPath funcPath) r
   }
-resolveType _ t = t
+resolveType _ _ t = t
 
 resolveReferences' :: (Type -> Type) -> Scope -> Scope
 resolveReferences' resolve s =
@@ -168,7 +194,7 @@ resolveReferences' resolve s =
 
 resolveReferences :: Path -> Scope -> Scope
 resolveReferences p s =
-  update (resolveReferences' (resolveType s)) p s
+  update (resolveReferences' (resolveType p s)) p s
 
 
 
