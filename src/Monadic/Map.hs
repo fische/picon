@@ -1,18 +1,38 @@
 module Monadic.Map (
-  mapWithKey
+  mapWithKeyM,
+  alterM
 ) where
 
 import qualified Data.Map.Strict as Map
 
-mapWithKey' :: (Monad m) => (k -> a -> m b) -> [(k, a)] -> m [(k, b)]
-mapWithKey' _ [] = return []
-mapWithKey' f ((k, v):tl) = do
+mapWithKeyM' :: (Monad m, Ord k) => (k -> a -> m b) -> [(k, a)] -> m [(k, b)]
+mapWithKeyM' _ [] = return []
+mapWithKeyM' f ((k, v):tl) = do
   newValue <- f k v
-  newTail <- mapWithKey' f tl
+  newTail <- mapWithKeyM' f tl
   return ((k, newValue) : newTail)
 
-mapWithKey :: (Ord k, Monad m) => (k -> a -> m b) -> Map.Map k a ->
+mapWithKeyM :: (Monad m, Ord k) => (k -> a -> m b) -> Map.Map k a ->
   m (Map.Map k b)
-mapWithKey f m = do
-  result <- mapWithKey' f $ Map.toList m
+mapWithKeyM f m = do
+  result <- mapWithKeyM' f $ Map.toList m
+  return (Map.fromList result)
+
+alterM' :: (Monad m, Ord k) => (Maybe a -> m (Maybe a)) -> k -> [(k, a)] ->
+  m [(k, a)]
+alterM' f k [] = do
+  r <- f Nothing
+  return $ maybe [] (\v -> [(k, v)]) r
+alterM' f k (hd@(k1, v1):tl)
+  | k == k1 = do
+    a <- f (Just v1)
+    return $ maybe tl (\v2 -> ((k1, v2):tl)) a
+  | otherwise = do
+    newTail <- alterM' f k tl
+    return (hd:newTail)
+
+alterM :: (Monad m, Ord k) => (Maybe a -> m (Maybe a)) -> k -> Map.Map k a ->
+  m (Map.Map k a)
+alterM f k m = do
+  result <- alterM' f k $ Map.toList m
   return (Map.fromList result)
