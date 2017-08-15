@@ -8,7 +8,8 @@ module Scope (
   addFunction,
   assignVariable,
   returnVariable,
-  call
+  call,
+  getReturnType
 ) where
 
 import qualified Data.Map.Strict as Map
@@ -21,7 +22,7 @@ import Control.Applicative
 
 import Language.Cython.Type
 
--- TODO Return, function & param references
+-- TODO Param references
 data Type =
   Either (Type, Type) |
   Type CythonType |
@@ -60,7 +61,7 @@ data Scope =
     path :: Path,
     functions :: Map.Map String [Scope],
     variables :: Map.Map String [Type],
-    returnType :: [Type]
+    returnType :: Maybe Type
   }
 
 
@@ -183,13 +184,15 @@ resolveType funcPath s t@VarRef{identifier = i, refering = refPath} =
     types = fromMaybe ((getReferenceType i var):(types t)) $
               checkReferencePath i (sub refPath funcPath) r
   }
+resolveType p s (Either(t1, t2)) =
+  Either(resolveType p s t1, resolveType p s t2)
 resolveType _ _ t = t
 
 resolveReferences' :: (Type -> Type) -> Scope -> Scope
 resolveReferences' resolve s =
   s {
     variables = Map.map (map resolve) $ variables s,
-    returnType = map resolve $ returnType s
+    returnType = resolve <$> returnType s
   }
 
 resolveReferences :: Path -> Scope -> Scope
@@ -225,7 +228,7 @@ addFunction i p s =
         path = Leaf,
         functions = Map.empty,
         variables = Map.empty,
-        returnType = []
+        returnType = Nothing
       } p s
       ref = FuncRef{
         refering = fPath
@@ -256,7 +259,7 @@ assignVariable k t p s = update (assignVariable' k t) p s
 returnVariable' :: Type -> Scope -> Scope
 returnVariable' t s@Function{} =
   s {
-    returnType = (t:(returnType s))
+    returnType = maybe (Just t) (\r -> Just $ Either (t, r)) (returnType s)
   }
 returnVariable' _ _ = error "cannot return anywhere except in a function"
 
@@ -265,5 +268,17 @@ returnVariable t = update (returnVariable' t)
 
 call :: Type -> Scope -> Scope
 call FuncRef{ refering = p } s = resolveReferences p s
+call (Either(t1, t2)) s = call t2 $ call t1 s
 -- TODO Handle VarRef
 call _ _ = error "cannot call non-callable objects"
+
+getReturnType' :: Type -> Type
+getReturnType' (VarRef { types = [] }) = Type . CType $ Void
+getReturnType' (VarRef { types = (hd:_) }) = hd
+getReturnType' (Either(t1, t2)) = Either(getReturnType' t1, getReturnType' t2)
+getReturnType' t = t
+
+getReturnType :: Type -> Scope -> Type
+getReturnType (FuncRef{ refering = p }) s =
+  maybe (Type . CType $ Void) getReturnType' (returnType $ get p s)
+getReturnType t _ = t
