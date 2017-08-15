@@ -5,13 +5,13 @@ module Scope (
   newModule,
   getVariableReference,
   exitBlock,
-  enterFunction,
+  addFunction,
   assignVariable,
-  returnVariable
+  returnVariable,
+  call
 ) where
 
 import qualified Data.Map.Strict as Map
-import Data.Bool
 import Data.Maybe
 import Monadic.Map
 
@@ -24,15 +24,19 @@ import Language.Cython.Type
 data Type =
   Either (Type, Type) |
   Type CythonType |
-  Ref {
+  VarRef {
     identifier :: String,
     refering :: Path,
     types :: [Type]
+  } |
+  FuncRef {
+    refering :: Path
   }
 
 data Path =
   Node ((String, Int), Path) |
   Leaf
+  deriving (Eq,Ord)
 
 append :: Path -> Path -> Path
 append Leaf p2 = p2
@@ -117,29 +121,26 @@ updateM f (Node ((ident, idx), p)) s = do
 merge :: (Scope -> Scope -> Scope) -> Path -> Scope -> Scope -> Scope
 merge f p s1 s2 = update (\v1 -> f v1 $ get p s2) p s1
 
-mergeM :: (Monad m) => (Scope -> Scope -> m Scope) -> Path -> Scope -> Scope ->
-  m Scope
-mergeM f p s1 s2 = updateM (\v1 -> f v1 $ get p s2) p s1
+getReferenceType :: String -> [Type] -> Type
+getReferenceType i [] =
+  error ("variable " ++ i ++ " referenced before assignement")
+getReferenceType i (VarRef{ types = t }:_) = getReferenceType i t
+getReferenceType _ (hd:_) = hd
 
 getVariableReference' :: String -> Path -> Scope -> Maybe Type
 getVariableReference' i Leaf s =
-  let found = Map.lookup i (variables s)
-      getHead [] = Just $ Ref{
-        identifier = i,
-        types = [],
-        refering = path s
-      }
+  let getHead [] = error ("variable " ++ i ++ " referenced before assignement")
       getHead (hd:_) = Just hd
-  in maybe Nothing getHead found
+  in maybe Nothing getHead $ Map.lookup i (variables s)
 getVariableReference' i (Node((ident, idx), p)) s =
   let err = error "next path level not found"
       f l =
         let func = l !! (reverseIndex l idx)
-            ref = bool Nothing (Just $ Ref{
+            ref = maybe Nothing (\t -> Just $ VarRef{
               identifier = i,
-              types = [],
+              types = [getReferenceType i t],
               refering = path s
-            }) $ Map.member i (functions s)
+            }) $ Map.lookup i (variables s)
         in getVariableReference' i p func <|> ref
   in maybe err f $ Map.lookup ident (functions s)
 
@@ -149,21 +150,18 @@ getVariableReference i p s =
   in fromMaybe err $ getVariableReference' i p s
 
 resolveType :: Scope -> Type -> Type
-resolveType s t@Ref{identifier = i, refering = p} =
+resolveType s t@VarRef{identifier = i, refering = p} =
   let r = get p s
       err = error ("variable " ++ i ++ " was not found")
       var = Map.findWithDefault err i (variables r)
-      getHead [] = error "variable referred has not been yet assigned"
-      getHead (hd:_) = hd
   in t{
-    types = (getHead var):(types t)
+    types = (getReferenceType i var):(types t)
   }
 resolveType _ t = t
 
 resolveReferences' :: (Type -> Type) -> Scope -> Scope
 resolveReferences' resolve s =
   s {
-    functions = Map.map (map (resolveReferences' resolve)) $ functions s,
     variables = Map.map (map resolve) $ variables s,
     returnType = map resolve $ returnType s
   }
@@ -177,9 +175,15 @@ resolveReferences p s =
 -- Operations between scopes
 exitBlock' :: Scope -> Scope -> Scope
 exitBlock' curr@Module{} block@Module{} =
-  let addConditionalType k v =
+  let mergeHead [] [] = []
+      mergeHead [] l2 = (Either (Type . CType $ Void, head l2)):l2
+      mergeHead l1 [] = (head l1):l1
+      mergeHead l1 l2
+        | (length l1) == (length l2) = l1
+        | otherwise = (Either (head l1, head l2)):l2
+      addConditionalType k v =
         let found = Map.lookup k (variables curr)
-        in maybe ((head v):v) (\l -> (Either (head l, head v)):v) found
+        in maybe (mergeHead [] v) (\l -> mergeHead l v) found
   in curr {
     variables = Map.mapWithKey addConditionalType (variables block)
   }
@@ -189,13 +193,18 @@ exitBlock' _ _ =
 exitBlock :: Path -> Scope -> Scope -> Scope
 exitBlock = merge exitBlock'
 
-enterFunction :: String -> Path -> Scope -> (Scope, Path)
-enterFunction i = add i $ Function{
-  path = Leaf,
-  functions = Map.empty,
-  variables = Map.empty,
-  returnType = []
-}
+addFunction :: String -> Path -> Scope -> (Scope, Path)
+addFunction i p s =
+  let (fScope, fPath) = add i Function{
+        path = Leaf,
+        functions = Map.empty,
+        variables = Map.empty,
+        returnType = []
+      } p s
+      ref = FuncRef{
+        refering = fPath
+      }
+  in (assignVariable i ref p fScope, fPath)
 
 
 
@@ -225,5 +234,10 @@ returnVariable' t s@Function{} =
   }
 returnVariable' _ _ = error "cannot return anywhere except in a function"
 
-returnVariable :: CythonType -> Path -> Scope -> Scope
-returnVariable t = update (returnVariable' (Type t))
+returnVariable :: Type -> Path -> Scope -> Scope
+returnVariable t = update (returnVariable' t)
+
+call :: Type -> Scope -> Scope
+call FuncRef{ refering = p } s = resolveReferences p s
+-- TODO Handle VarRef
+call _ _ = error "cannot call non-callable objects"
