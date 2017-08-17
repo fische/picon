@@ -1,12 +1,9 @@
-{-# LANGUAGE DeriveDataTypeable #-}
-
-module Language.Cython.Type where
-
-import Data.Data
-
-import Control.Monad.Trans.Except
-
-import Language.Cython.Error
+module Language.Cython.Type (
+  CBasicType(..),
+  CType(..),
+  CythonType(..),
+  mergeTypes
+) where
 
 data CBasicType =
   Char |
@@ -16,7 +13,7 @@ data CBasicType =
   LongLong |
   Float |
   Double
-  deriving (Eq,Ord,Show,Typeable,Data)
+  deriving (Eq,Ord,Show)
 
 data CType =
   Void |
@@ -24,23 +21,26 @@ data CType =
   Signed CBasicType |
   Unsigned CBasicType |
   Ptr CType
-  deriving (Eq,Ord,Show,Typeable,Data)
+  deriving (Eq,Ord,Show)
 
+-- TODO Handle typedefs
 data CythonType =
   CType CType |
   String |
   Bytes |
   Unicode |
-  PythonObject
-  deriving (Eq,Ord,Show,Typeable,Data)
+  PythonObject |
+  Func CythonType |
+  TypeDef String
+  deriving (Eq,Ord,Show)
 
-mergeTypes' :: annot -> CythonType -> [CythonType] ->
-  Except (Error annot) CythonType
-mergeTypes' _ acc [] = return acc
-mergeTypes' loc acc (hd:tl)
-  | acc /= hd = throwE $ errNotSupported loc "Multi-typed variables"
-  | otherwise = mergeTypes' loc hd tl
+-- TODO Handle typedefs
+mergeTypes' :: CythonType -> [CythonType] -> CythonType
+mergeTypes' acc [] = acc
+mergeTypes' acc (hd:tl)
+  | acc /= hd = error "Multi-typed variables are not yet supported"
+  | otherwise = mergeTypes' hd tl
 
-mergeTypes :: annot -> [CythonType] -> Except (Error annot) CythonType
-mergeTypes _ [] = return $ CType Void
-mergeTypes loc (hd:tl) = mergeTypes' loc hd tl
+mergeTypes :: [CythonType] -> CythonType
+mergeTypes [] = CType Void
+mergeTypes (hd:tl) = mergeTypes' hd tl

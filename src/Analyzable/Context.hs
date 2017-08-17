@@ -1,15 +1,15 @@
-module Context (
+module Analyzable.Context (
   Scope.Type(..),
   Scope.Path(..),
   Context(..),
   newContext,
-  Context.getVariableReference,
-  Context.assignVariable,
-  Context.returnVariable,
-  Context.exitBlock,
-  Context.stashFunction,
-  Context.call,
-  Context.getReturnType
+  Analyzable.Context.getVariableReference,
+  Analyzable.Context.assignVariable,
+  Analyzable.Context.returnVariable,
+  Analyzable.Context.exitBlock,
+  Analyzable.Context.stashFunction,
+  Analyzable.Context.call,
+  Analyzable.Context.getReturnType
 ) where
 
 import qualified Data.Map.Strict as Map

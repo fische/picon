@@ -1,6 +1,8 @@
 module Scope (
   Type(..),
   Path(..),
+  getMangledFunctionIdent,
+  getMangledTypedefIdent,
   Scope(..),
   newModule,
   getVariableReference,
@@ -9,7 +11,10 @@ module Scope (
   assignVariable,
   returnVariable,
   call,
-  getReturnType
+  getReturnType,
+  getLocalVariables,
+  dropNextFunction,
+  getFunctionReturnType
 ) where
 
 import qualified Data.Map.Strict as Map
@@ -44,12 +49,31 @@ append :: Path -> Path -> Path
 append Leaf p2 = p2
 append (Node (idx, p1)) p2 = Node (idx, (append p1 p2))
 
+isSubPath :: Path -> Path -> Bool
+isSubPath _ Leaf = False
+isSubPath Leaf _ = True
+isSubPath (Node(idx1, p1)) (Node(idx2, p2))
+  | idx1 == idx2 = isSubPath p1 p2
+  | otherwise = False
+
 sub :: Path -> Path -> Path
-sub Leaf p = p
 sub _ Leaf = error "p1 is not subpath of p2"
+sub Leaf p = p
 sub (Node(idx1, p1)) (Node(idx2, p2))
   | idx1 == idx2 = sub p1 p2
   | otherwise = error "p1 is not subpath of p2"
+
+getMangledPath :: String -> String -> String -> Path -> String
+getMangledPath start end "" Leaf = start ++ end
+getMangledPath start end i Leaf = start ++ "_" ++ i ++ end
+getMangledPath start end i (Node((ident, idx), p)) =
+  getMangledPath (start ++ "_" ++ ident ++ (show idx)) end i p
+
+getMangledFunctionIdent :: Path -> String
+getMangledFunctionIdent = getMangledPath "_" "__" ""
+
+getMangledTypedefIdent :: Path -> String
+getMangledTypedefIdent = getMangledPath "_" "_t" ""
 
 data Scope =
   Module {
@@ -282,3 +306,75 @@ getReturnType :: Type -> Scope -> Type
 getReturnType (FuncRef{ refering = p }) s =
   maybe (Type . CType $ Void) getReturnType' (returnType $ get p s)
 getReturnType t _ = t
+
+
+
+getCythonType' :: Scope -> Type ->
+  State.State (Map.Map String CythonType) CythonType
+getCythonType' s (Either(t1, t2)) = do
+  v1 <- getCythonType' s t1
+  v2 <- getCythonType' s t2
+  return $ mergeTypes [v1, v2]
+getCythonType' _ (Type t) = return t
+getCythonType' s (VarRef{ types = t }) = do
+  v <- mapM (getCythonType' s) t
+  return $ mergeTypes v
+getCythonType' s (FuncRef{ refering = p }) = do
+  let tdef = getMangledTypedefIdent p
+  bool
+    (return (TypeDef tdef))
+    (do
+      typedefs <- State.get
+      bool
+        (do
+          r <- getFunctionReturnType $ get (sub (path s) p) s
+          State.put $ Map.insert tdef (Func r) typedefs
+          return (TypeDef tdef))
+        (return (TypeDef tdef))
+        (Map.member tdef typedefs))
+    (isSubPath (path s) p)
+
+getCythonType :: Scope -> [Type] ->
+  State.State (Map.Map String CythonType) CythonType
+getCythonType s t = do
+  v <- mapM (getCythonType' s) t
+  return $ mergeTypes v
+
+getFunctionReturnType :: Scope ->
+  State.State (Map.Map String CythonType) CythonType
+getFunctionReturnType s@(Function{returnType = r}) =
+  maybe (return $ CType Void) (getCythonType' s) r
+getFunctionReturnType _ =
+  error "cannot get return type of something else than a function"
+
+getLocalVariables :: Scope ->
+  State.State (Map.Map String CythonType) (Map.Map String CythonType)
+getLocalVariables s = do
+  result <- foldrWithKeyM
+    (\k v acc-> do
+      t <- getCythonType s v
+      return ((k, t):acc))
+    []
+    (variables s)
+  return $ Map.fromList result
+
+dropNextFunction' :: Maybe [Scope] -> State.State Scope (Maybe [Scope])
+dropNextFunction' Nothing = error "no more function to drop"
+dropNextFunction' (Just []) = error "no more function to drop"
+dropNextFunction' (Just (hd:tl)) = do
+  State.put hd
+  return $ Just tl
+
+dropNextFunction :: String -> Scope -> (Scope, Scope)
+dropNextFunction i curr =
+  let emptyFunc = Function{
+        path = Leaf,
+        functions = Map.empty,
+        variables = Map.empty,
+        returnType = Nothing
+      }
+      (newFunctions, dropped) =
+        State.runState (alterM dropNextFunction' i $ functions curr) emptyFunc
+  in (curr{
+    functions = newFunctions
+  }, dropped)

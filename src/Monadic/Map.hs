@@ -1,6 +1,7 @@
 module Monadic.Map (
   mapWithKeyM,
-  alterM
+  alterM,
+  foldrWithKeyM
 ) where
 
 import qualified Data.Map.Strict as Map
@@ -16,7 +17,7 @@ mapWithKeyM :: (Monad m, Ord k) => (k -> a -> m b) -> Map.Map k a ->
   m (Map.Map k b)
 mapWithKeyM f m = do
   result <- mapWithKeyM' f $ Map.toList m
-  return (Map.fromList result)
+  return $ Map.fromList result
 
 alterM' :: (Monad m, Ord k) => (Maybe a -> m (Maybe a)) -> k -> [(k, a)] ->
   m [(k, a)]
@@ -35,4 +36,15 @@ alterM :: (Monad m, Ord k) => (Maybe a -> m (Maybe a)) -> k -> Map.Map k a ->
   m (Map.Map k a)
 alterM f k m = do
   result <- alterM' f k $ Map.toList m
-  return (Map.fromList result)
+  return $ Map.fromList result
+
+foldrWithKeyM' :: (Monad m) => (k -> a -> b -> m b) -> b -> [(k, a)] -> m b
+foldrWithKeyM' _ acc [] = return acc
+foldrWithKeyM' f acc ((k, v):tl) = do
+  result <- f k v acc
+  foldrWithKeyM' f result tl
+
+foldrWithKeyM :: (Monad m) => (k -> a -> b -> m b) -> b -> Map.Map k a -> m b
+foldrWithKeyM f acc m = do
+  result <- foldrWithKeyM' f acc $ Map.toList m
+  return result

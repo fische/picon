@@ -1,14 +1,15 @@
 {-# LANGUAGE FlexibleInstances, DefaultSignatures #-}
 
 module Analyzable (
-  Analyzable(..)
+  Analyzable(..),
+  module Analyzable.Context
 ) where
 
 import qualified Language.Python.Common.AST as AST
 import Language.Python.Common.SrcLocation (SrcSpan(..))
 import Language.Cython.Type
 
-import Context
+import Analyzable.Context
 
 getExprType :: Context -> AST.Expr a -> Type
 getExprType ctx AST.Var{AST.var_ident = ident} =
