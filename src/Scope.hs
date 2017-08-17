@@ -1,4 +1,6 @@
 module Scope (
+  Argument(..),
+  Parameter(..),
   Type(..),
   Path(..),
   Scope(..),
@@ -10,9 +12,11 @@ module Scope (
   returnVariable,
   call,
   getReturnType,
+  addParameter,
+  getLocalVariableType,
   getLocalVariables,
-  dropNextFunction,
-  getFunctionReturnType
+  getFunctionReturnType,
+  dropNextFunction
 ) where
 
 import qualified Data.Map.Strict as Map
@@ -25,7 +29,16 @@ import Control.Applicative
 
 import Language.Cython.Type
 
--- TODO Param references
+data Argument =
+  Position Int |
+  Keyword String
+  deriving (Eq,Ord)
+
+data Parameter =
+  Positional String |
+  NonPositional String
+
+-- TODO Return references?
 data Type =
   Either (Type, Type) |
   Type CythonType |
@@ -36,12 +49,16 @@ data Type =
   } |
   FuncRef {
     refering :: Path
+  } |
+  ParamRef {
+    identifier :: String,
+    refering :: Path
   }
 
 data Path =
   Node ((String, Int), Path) |
   Leaf
-  deriving (Eq,Ord,Show)
+  deriving (Eq,Ord)
 
 append :: Path -> Path -> Path
 append Leaf p2 = p2
@@ -64,13 +81,15 @@ data Scope =
     path :: Path,
     functions :: Map.Map String [Scope],
     variables :: Map.Map String [Type],
-    returnType :: Maybe Type
+    returnType :: Maybe Type,
+    parameterPosition :: [String],
+    parameterType :: Map.Map String [Type]
   }
 
 
 
 -- Primary scope operations
-reverseIndex :: [Scope] -> Int -> Int
+reverseIndex :: [a] -> Int -> Int
 reverseIndex l idx
   | (length l) > idx = (length l) - idx - 1
   | otherwise = error "index is outside list range"
@@ -231,7 +250,9 @@ addFunction i p s =
         path = Leaf,
         functions = Map.empty,
         variables = Map.empty,
-        returnType = Nothing
+        returnType = Nothing,
+        parameterPosition = [],
+        parameterType = Map.empty
       } p s
       ref = FuncRef{
         refering = fPath
@@ -269,11 +290,24 @@ returnVariable' _ _ = error "cannot return anywhere except in a function"
 returnVariable :: Type -> Path -> Scope -> Scope
 returnVariable t = update (returnVariable' t)
 
-call :: Type -> Scope -> Scope
-call FuncRef{ refering = p } s = resolveReferences p s
-call (Either(t1, t2)) s = call t2 $ call t1 s
+addParameterType :: Argument -> Type -> Scope -> Scope
+addParameterType (Keyword ident) t s =
+  let err = error ("cannot find variable " ++ ident)
+  in s {
+      parameterType =
+        Map.alter (maybe err (\l -> Just (t:l))) ident (parameterType s)
+    }
+addParameterType (Position idx) t s =
+  let l = parameterPosition s
+  in addParameterType (Keyword (l !! (reverseIndex l idx))) t s
+
+call :: Type -> Map.Map Argument Type -> Scope -> Scope
+call FuncRef{ refering = p } args s =
+  resolveReferences p $
+    update (\fun -> Map.foldrWithKey addParameterType fun args) p s
+call (Either(t1, t2)) args s = call t2 args $ call t1 args s
 -- TODO Handle VarRef
-call _ _ = error "cannot call non-callable objects"
+call _ _ _ = error "cannot call non-callable objects"
 
 getReturnType' :: Type -> Type
 getReturnType' (VarRef { types = [] }) = Type . CType $ Void
@@ -286,33 +320,69 @@ getReturnType (FuncRef{ refering = p }) s =
   maybe (Type . CType $ Void) getReturnType' (returnType $ get p s)
 getReturnType t _ = t
 
+addParameter' :: Parameter -> Maybe Type -> Scope -> Scope
+addParameter' (Positional i) t s =
+  let f Nothing = Just $ maybeToList t
+      f (Just _) = error "parameter has already been added"
+      params = Map.alter f i $ parameterType s
+      ref = ParamRef{identifier = i, refering = path s}
+  in s {
+    variables = Map.insert i [ref] $ variables s,
+    parameterPosition = i:(parameterPosition s),
+    parameterType = params
+  }
+addParameter' (NonPositional i) t s =
+  let f Nothing = Just $ maybeToList t
+      f (Just _) = error "parameter has already been added"
+      params = Map.alter f i $ parameterType s
+      ref = ParamRef{identifier = i, refering = path s}
+  in s {
+    variables = Map.insert i [ref] $ variables s,
+    parameterType = params
+  }
+
+addParameter :: Parameter -> Maybe Type -> Path -> Scope -> Scope
+addParameter param t p s = update (addParameter' param t) p s
 
 
-getCythonType' :: Type -> CythonType
-getCythonType' (Either(t1, t2)) =
-  mergeTypes [(getCythonType' t1), (getCythonType' t2)]
-getCythonType' (Type t) = t
-getCythonType' (VarRef{ types = t }) = mergeTypes $ map getCythonType' t
-getCythonType' (FuncRef{}) =
+
+getCythonType' :: Scope -> Type -> CythonType
+getCythonType' global (Either(t1, t2)) =
+  mergeTypes [(getCythonType' global t1), (getCythonType' global t2)]
+getCythonType' _ (Type t) = t
+getCythonType' global (VarRef{ types = t }) =
+  mergeTypes $ map (getCythonType' global) t
+getCythonType' global (ParamRef{ identifier = i, refering = p }) =
+  let s = get p global
+      err = error ("can not find parameter " ++ i)
+  in getCythonType global . Map.findWithDefault err i $ parameterType s
+getCythonType' _ (FuncRef{}) =
   error "function pointers are not yet supported"
 
-getCythonType :: [Type] -> CythonType
-getCythonType t = mergeTypes (map getCythonType' t)
+getCythonType :: Scope -> [Type] -> CythonType
+getCythonType s t = mergeTypes (map (getCythonType' s) t)
 
-getFunctionReturnType :: Scope -> CythonType
-getFunctionReturnType (Function{returnType = r}) =
-  maybe (CType Void) getCythonType' r
-getFunctionReturnType _ =
+getFunctionReturnType :: Scope -> Scope -> CythonType
+getFunctionReturnType global (Function{returnType = r}) =
+  maybe (CType Void) (getCythonType' global) r
+getFunctionReturnType _ _ =
   error "cannot get return type of something else than a function"
 
-getLocalVariables' :: String -> [Type] -> Map.Map String CythonType ->
-  Map.Map String CythonType
-getLocalVariables' _ [FuncRef{}] acc = acc
-getLocalVariables' k v acc = Map.insert k (getCythonType v) acc
+getLocalVariableType :: Scope -> String -> Scope -> CythonType
+getLocalVariableType global ident s =
+  let err = error ("variable " ++ ident ++ " has not been declared")
+  in maybe err (getCythonType global) $ Map.lookup ident (variables s)
 
-getLocalVariables :: Scope -> Map.Map String CythonType
-getLocalVariables s =
-  Map.foldrWithKey getLocalVariables' Map.empty $ variables s
+getLocalVariables' :: Scope -> String -> [Type] -> Map.Map String CythonType ->
+  Map.Map String CythonType
+getLocalVariables' _ _ [FuncRef{}] acc = acc
+getLocalVariables' global k v acc = Map.insert k (getCythonType global v) acc
+
+getLocalVariables :: Scope -> Scope -> Map.Map String CythonType
+getLocalVariables global Function{parameterType = p, variables = v} =
+  Map.foldrWithKey (getLocalVariables' global) Map.empty $ Map.difference v p
+getLocalVariables global Module{variables = v} =
+  Map.foldrWithKey (getLocalVariables' global) Map.empty v
 
 dropNextFunction' :: Maybe [Scope] -> State.State Scope (Maybe [Scope])
 dropNextFunction' Nothing = error "no more function to drop"
@@ -327,7 +397,9 @@ dropNextFunction i curr =
         path = Leaf,
         functions = Map.empty,
         variables = Map.empty,
-        returnType = Nothing
+        returnType = Nothing,
+        parameterPosition = [],
+        parameterType = Map.empty
       }
       (newFunctions, dropped) =
         State.runState (alterM dropNextFunction' i $ functions curr) emptyFunc

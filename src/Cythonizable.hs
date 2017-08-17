@@ -43,5 +43,8 @@ instance Cythonizable (AST.Statement SrcSpan) (Statement SrcSpan) where
     return $ Fun name cargs r returnType (cdef:cbody) annot
   cythonize s = return $ Statement s
 
-instance Cythonizable (AST.Parameter SrcSpan) (AST.Parameter SrcSpan) where
-  cythonize p = return p
+instance Cythonizable (AST.Parameter SrcSpan) (Parameter SrcSpan) where
+  cythonize (AST.Param ident py_annot dflt annot) = do
+    typ <- getLocalVariableType $ AST.ident_string ident
+    return $ Param typ ident py_annot dflt annot
+  cythonize p = return $ Parameter p

@@ -1,6 +1,7 @@
 module Cythonizable.Context (
   Context(..),
   Cythonizable.Context.fromAnalysis,
+  Cythonizable.Context.getLocalVariableType,
   Cythonizable.Context.getLocalVariables,
   Cythonizable.Context.getFunctionReturnType,
   Cythonizable.Context.dropNextFunction
@@ -18,31 +19,40 @@ import Scope
 
 data Context =
   Context {
-    scope :: Scope
+    globalScope :: Scope,
+    currentScope :: Scope
   }
 
 fromAnalysis :: Context.Context -> Context
 fromAnalysis ctx = Context {
-  scope = Context.scope ctx
+  globalScope = Context.scope ctx,
+  currentScope = Context.scope ctx
 }
+
+getLocalVariableType :: String -> State Context CythonType
+getLocalVariableType ident = do
+  ctx <- get
+  return .
+    Scope.getLocalVariableType (globalScope ctx) ident $
+    currentScope ctx
 
 getLocalVariables :: State Context (Map.Map String CythonType)
 getLocalVariables = do
   ctx <- get
-  return . Scope.getLocalVariables $ scope ctx
+  return . Scope.getLocalVariables (globalScope ctx) $ currentScope ctx
 
 getFunctionReturnType :: State Context CythonType
 getFunctionReturnType = do
   ctx <- get
-  return . Scope.getFunctionReturnType $ scope ctx
+  return . Scope.getFunctionReturnType (globalScope ctx) $ currentScope ctx
 
 dropNextFunction :: String -> State Context Context
 dropNextFunction i = do
   ctx <- get
-  let (newScope, fun) = Scope.dropNextFunction i (scope ctx)
+  let (newScope, fun) = Scope.dropNextFunction i (currentScope ctx)
   put ctx{
-    scope = newScope
+    currentScope = newScope
   }
   return ctx{
-    scope = fun
+    currentScope = fun
   }

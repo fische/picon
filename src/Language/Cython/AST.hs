@@ -5,6 +5,7 @@ module Language.Cython.AST (
   Suite,
   Statement(..),
   Handler(..),
+  Parameter(..),
   Expr(..)
 ) where
 
@@ -34,7 +35,7 @@ data Statement annot =
   } |
   Fun {
     fun_name :: AST.Ident annot,
-    fun_args :: [AST.Parameter annot],
+    fun_args :: [Parameter annot],
     fun_result_annotation :: Maybe (AST.Expr annot),
     fun_return :: CythonType,
     fun_body :: Suite annot,
@@ -98,6 +99,17 @@ data Handler annot =
 
 instance AST.Annotated Handler where
   annot handler = handler_annot handler
+
+data Parameter annot =
+  Param {
+    param_type :: CythonType,
+    param_name :: AST.Ident annot,
+    param_py_annotation :: Maybe (AST.Expr annot),
+    param_default :: Maybe (AST.Expr annot),
+    param_annot :: annot
+  } |
+  Parameter (AST.Parameter annot)
+  deriving (Eq,Ord,Show,Functor)
 
 data Expr annot =
   AddressOf {

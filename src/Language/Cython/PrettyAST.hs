@@ -83,6 +83,12 @@ instance Pretty (Handler annot) where
   pretty (Handler { handler_clause = exceptClause, handler_suite = suite }) =
     pretty exceptClause <> colon $+$ indent (prettySuite suite)
 
+instance Pretty (Parameter annot) where
+  pretty (Param { param_type = typ, param_name = ident, param_py_annotation = annot, param_default = def }) =
+    pretty typ <+> pretty ident <> (maybe empty (\e -> colon <> pretty e <> space) annot) <> 
+    maybe empty (\e -> equals <> pretty e) def
+  pretty (Parameter p) = pretty p
+
 instance Pretty (Expr annot) where
   pretty (AddressOf expr _) = text "&(" <> pretty expr <> pretty ")"
   pretty (Expr expr) = pretty expr

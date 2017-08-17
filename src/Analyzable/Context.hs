@@ -1,4 +1,5 @@
 module Analyzable.Context (
+  Scope.Argument(..),
   Scope.Type(..),
   Scope.Path(..),
   Context(..),
@@ -9,16 +10,20 @@ module Analyzable.Context (
   Analyzable.Context.exitBlock,
   Analyzable.Context.stashFunction,
   Analyzable.Context.call,
-  Analyzable.Context.getReturnType
+  Analyzable.Context.getReturnType,
+  Analyzable.Context.addParameter,
+  Analyzable.Context.enablePositionalParametersFlag,
+  Analyzable.Context.disablePositionalParametersFlag
 ) where
 
 import qualified Data.Map.Strict as Map
-import Data.Maybe (fromMaybe)
+import Data.Bool
 
 import Scope
 
 data Context =
   Context {
+    positionalParameters :: Bool,
     position :: Path,
     scope :: Scope,
     functionsStash :: Map.Map Path (Context -> Context)
@@ -26,6 +31,7 @@ data Context =
 
 newContext :: Context
 newContext = Context {
+  positionalParameters = True,
   position = Leaf,
   scope = newModule,
   functionsStash = Map.empty
@@ -60,26 +66,44 @@ stashFunction ident parse ctx =
     scope = newScope
   }
 
-unstashFunction :: Path -> Context -> Maybe Context
+unstashFunction :: Path -> Context -> Context
 unstashFunction p ctx =
   let del _ _ = Nothing
       (parse, stash) = Map.updateLookupWithKey del p (functionsStash ctx)
-  in maybe Nothing (\f ->
+  in maybe ctx (\f ->
       let newCtx = f ctx {
             position = p
           }
-      in Just newCtx {
+      in newCtx {
         position = (position ctx),
         functionsStash = stash
       }) parse
 
-call :: Type -> Context -> Context
-call t@FuncRef{ refering = p } ctx =
-  fromMaybe ctx{
-    scope = Scope.call t $ scope ctx
-  } $ unstashFunction p ctx
+call :: Type -> Map.Map Argument Type -> Context -> Context
+call t@FuncRef{ refering = p } args ctx =
+  let newCtx = unstashFunction p ctx
+  in ctx{
+    scope = Scope.call t args $ scope newCtx
+  }
 -- TODO Handle VarRef
-call _ _ = error "cannot call non-callable objects"
+call _ _ _ = error "cannot call non-callable objects"
 
 getReturnType :: Type -> Context -> Type
 getReturnType t ctx = Scope.getReturnType t (scope ctx)
+
+addParameter :: String -> Maybe Type -> Context -> Context
+addParameter i t ctx =
+  let param = bool (NonPositional i) (Positional i) $ positionalParameters ctx
+  in ctx {
+    scope = Scope.addParameter param t (position ctx) (scope ctx)
+  }
+
+enablePositionalParametersFlag :: Context -> Context
+enablePositionalParametersFlag ctx = ctx{
+  positionalParameters = True
+}
+
+disablePositionalParametersFlag :: Context -> Context
+disablePositionalParametersFlag ctx = ctx{
+  positionalParameters = False
+}

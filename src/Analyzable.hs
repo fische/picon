@@ -5,6 +5,8 @@ module Analyzable (
   module Analyzable.Context
 ) where
 
+import qualified Data.Map.Strict as Map
+
 import qualified Language.Python.Common.AST as AST
 import Language.Python.Common.SrcLocation (SrcSpan(..))
 import Language.Cython.Type
@@ -24,6 +26,36 @@ getExprType _ AST.ByteStrings{} = Type Bytes
 getExprType _ AST.Strings{} = Type String
 getExprType _ AST.UnicodeStrings{} = Type Unicode
 getExprType _ _ = Type PythonObject
+
+getKeywordArgumentType :: Context -> [AST.Argument a] ->
+  Map.Map Argument Type -> Map.Map Argument Type
+getKeywordArgumentType _ [] args = args
+getKeywordArgumentType ctx
+  (AST.ArgKeyword{AST.arg_keyword = k, AST.arg_expr = expr}:tl) args =
+    getKeywordArgumentType ctx tl $
+      Map.insert (Keyword $ AST.ident_string k) (getExprType ctx expr) args
+getKeywordArgumentType _ (AST.ArgExpr{}:_) _ =
+  error "positional argument can not be placed after keyword arguments"
+getKeywordArgumentType _ (AST.ArgVarArgsPos{}:_) _ =
+  error "excess positional parameter is not yet supported"
+getKeywordArgumentType _ (AST.ArgVarArgsKeyword{}:_) _ =
+  error "excess keyword parameter is not yet supported"
+
+getPositionalArgumentType :: Context -> [AST.Argument a] ->
+  Map.Map Argument Type -> Map.Map Argument Type
+getPositionalArgumentType _ [] args = args
+getPositionalArgumentType ctx (AST.ArgExpr{AST.arg_expr = expr}:tl) args =
+  getPositionalArgumentType ctx tl $
+    Map.insert (Position $ Map.size args) (getExprType ctx expr) args
+getPositionalArgumentType ctx l@(AST.ArgKeyword{}:_) args =
+  getKeywordArgumentType ctx l args
+getPositionalArgumentType _ (AST.ArgVarArgsPos{}:_) _ =
+  error "excess positional parameter is not yet supported"
+getPositionalArgumentType _ (AST.ArgVarArgsKeyword{}:_) _ =
+  error "excess keyword parameter is not yet supported"
+
+getArgumentType :: Context -> [AST.Argument a] -> Map.Map Argument Type
+getArgumentType ctx args = getPositionalArgumentType ctx args Map.empty
 
 class Analyzable t where
   analyze :: t -> Context -> Context
@@ -78,7 +110,7 @@ instance Analyzable (AST.Statement SrcSpan) where
     let bodyCtx = exitBlock ctx . analyze body . analyze gen $ analyze targets ctx
     in exitBlock bodyCtx $ analyze e bodyCtx
   analyze (AST.Fun name args _ body _) ctx =
-    let parse = analyze body . analyze args
+    let parse = analyze body . analyze args . enablePositionalParametersFlag
     in stashFunction (AST.ident_string name) parse ctx
   analyze (AST.Class _ args body _) ctx = analyze body $ analyze args ctx
   analyze (AST.Conditional guards e _) ctx =
@@ -104,8 +136,10 @@ instance Analyzable (AST.Statement SrcSpan) where
   analyze (AST.With wctx body _) ctx = analyze body $ analyze wctx ctx
   analyze (AST.Delete exprs _) ctx = analyze exprs ctx
   analyze (AST.StmtExpr expr _) ctx = analyze expr ctx
-  analyze (AST.Global vars _) ctx = analyze vars ctx
-  analyze (AST.NonLocal vars _) ctx = analyze vars ctx
+  analyze (AST.Global _ _) _ =
+    error "global bindings are not yet supported"
+  analyze (AST.NonLocal _ _) _ =
+    error "nonlocal bindings are not yet supported"
   analyze (AST.Assert exprs _) ctx = analyze exprs ctx
   analyze (AST.Print _ exprs _ _) ctx = analyze exprs ctx
   analyze (AST.Exec expr t _) ctx = analyze t $ analyze expr ctx
@@ -119,19 +153,24 @@ instance Analyzable (AST.Decorator SrcSpan) where
   analyze (AST.Decorator _ args _) ctx = analyze args ctx
 
 instance Analyzable (AST.Parameter SrcSpan) where
-  analyze (AST.Param _ _ dflt _) ctx = analyze dflt ctx
-  analyze (AST.UnPackTuple unpack dflt _) ctx = analyze dflt $ analyze unpack ctx
-  analyze _ ctx = ctx
-
-instance Analyzable (AST.ParamTuple SrcSpan) where
-  analyze (AST.ParamTuple tuple _) ctx = analyze tuple ctx
-  analyze _ ctx = ctx
+  analyze (AST.Param ident _ dflt _) ctx =
+    let dfltCtx = analyze dflt ctx
+        dfltType = fmap (getExprType dfltCtx) dflt
+    in addParameter (AST.ident_string ident) dfltType dfltCtx
+  analyze (AST.EndPositional{}) ctx = disablePositionalParametersFlag ctx
+  analyze (AST.UnPackTuple{}) _ = error "tuples are not yet supported"
+  analyze (AST.VarArgsPos{}) _ =
+    error "excess positional parameter is not yet supported"
+  analyze (AST.VarArgsKeyword{}) _ =
+    error "excess keyword parameter is not yet supported"
 
 instance Analyzable (AST.Argument SrcSpan) where
   analyze (AST.ArgExpr expr _) ctx = analyze expr ctx
-  analyze (AST.ArgVarArgsPos expr _) ctx = analyze expr ctx
-  analyze (AST.ArgVarArgsKeyword expr _) ctx = analyze expr ctx
   analyze (AST.ArgKeyword _ expr _) ctx = analyze expr ctx
+  analyze (AST.ArgVarArgsPos _ _) _ =
+    error "excess positional parameter is not yet supported"
+  analyze (AST.ArgVarArgsKeyword _ _) _ =
+    error "excess keyword parameter is not yet supported"
 
 instance Analyzable (AST.Handler SrcSpan) where
   analyze (AST.Handler clause suite _) ctx = analyze suite $ analyze clause ctx
@@ -158,11 +197,9 @@ instance Analyzable (AST.CompIter SrcSpan) where
   analyze (AST.IterIf iter _) ctx = analyze iter ctx
 
 instance Analyzable (AST.Expr SrcSpan) where
-  analyze (AST.Call fun [] _) ctx =
-    let funCtx = analyze fun ctx
-    in call (getExprType funCtx fun) funCtx
-  -- TODO Handle with args
-  analyze (AST.Call fun args _) ctx = analyze args $ analyze fun ctx
+  analyze (AST.Call fun args _) ctx =
+    let funCtx = analyze fun $ analyze args ctx
+    in call (getExprType funCtx fun) (getArgumentType funCtx args) funCtx
   analyze (AST.Subscript e expr _) ctx = analyze expr $ analyze e ctx
   analyze (AST.SlicedExpr expr slice _) ctx = analyze slice $ analyze expr ctx
   analyze (AST.CondExpr true cond false _) ctx =
