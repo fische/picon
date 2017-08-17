@@ -5,6 +5,8 @@ module Cythonizable (
   module Cythonizable.Context
 ) where
 
+import Data.Bool
+
 import Control.Monad.State
 
 import qualified Language.Python.Common.AST as AST
@@ -27,7 +29,10 @@ instance Cythonizable (AST.Module SrcSpan) (Module SrcSpan) where
           var_list = vars,
           stmt_annot = SpanEmpty
         }
-    return $ Module (cdef:rstmts)
+    bool
+      (return $ Module rstmts)
+      (return $ Module (cdef:rstmts))
+      (not $ null vars)
 
 instance Cythonizable (AST.Statement SrcSpan) (Statement SrcSpan) where
   cythonize (AST.Fun name args r body annot) = do
@@ -40,7 +45,10 @@ instance Cythonizable (AST.Statement SrcSpan) (Statement SrcSpan) where
           var_list = vars,
           stmt_annot = SpanEmpty
         }
-    return $ Fun name cargs r returnType (cdef:cbody) annot
+    bool
+      (return $ Fun name cargs r returnType cbody annot)
+      (return $ Fun name cargs r returnType (cdef:cbody) annot)
+      (not $ null vars)
   cythonize s = return $ Statement s
 
 instance Cythonizable (AST.Parameter SrcSpan) (Parameter SrcSpan) where

@@ -306,7 +306,7 @@ call FuncRef{ refering = p } args s =
   resolveReferences p $
     update (\fun -> Map.foldrWithKey addParameterType fun args) p s
 call (Either(t1, t2)) args s = call t2 args $ call t1 args s
--- TODO Handle VarRef
+call VarRef{ types = (hd:_) } args ctx = call hd args ctx
 call _ _ _ = error "cannot call non-callable objects"
 
 getReturnType' :: Type -> Type
@@ -318,6 +318,7 @@ getReturnType' t = t
 getReturnType :: Type -> Scope -> Type
 getReturnType (FuncRef{ refering = p }) s =
   maybe (Type . CType $ Void) getReturnType' (returnType $ get p s)
+getReturnType (VarRef{ types = (hd:_) }) s = getReturnType hd s
 getReturnType t _ = t
 
 addParameter' :: Parameter -> Maybe Type -> Scope -> Scope

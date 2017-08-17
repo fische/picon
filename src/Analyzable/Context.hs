@@ -85,7 +85,8 @@ call t@FuncRef{ refering = p } args ctx =
   in ctx{
     scope = Scope.call t args $ scope newCtx
   }
--- TODO Handle VarRef
+call VarRef{ types = (hd:_) } args ctx =
+  Analyzable.Context.call hd args ctx
 call _ _ _ = error "cannot call non-callable objects"
 
 getReturnType :: Type -> Context -> Type
