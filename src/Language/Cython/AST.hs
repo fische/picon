@@ -1,30 +1,23 @@
-{-# LANGUAGE DeriveDataTypeable, DeriveFunctor #-}
+{-# LANGUAGE DeriveFunctor #-}
 
-module Language.Cython.AST where
+module Language.Cython.AST (
+  Module(..),
+  Suite,
+  Statement(..),
+  Handler(..),
+  Parameter(..),
+  Expr(..)
+) where
 
-import Data.Data
+import qualified Data.Map.Strict as Map
 
 import qualified Language.Python.Common.AST as AST
+import Language.Cython.Type
 
-data Module annot =
-  Module {
-    module_body :: Suite annot,
-    module_annot :: annot
-  }
-  deriving (Eq,Ord,Show,Typeable,Data,Functor)
+newtype Module annot = Module (Suite annot)
+  deriving (Eq,Ord,Show,Functor)
 
-instance AST.Annotated Module where
-  annot m = module_annot m
-
-data Suite annot =
-  Suite {
-    suite_stmts :: [Statement annot],
-    suite_annot :: annot
-  }
-  deriving (Eq,Ord,Show,Typeable,Data,Functor)
-
-instance AST.Annotated Suite where
-  annot suite = suite_annot suite
+type Suite annot = [Statement annot]
 
 data Statement annot =
   While {
@@ -42,8 +35,9 @@ data Statement annot =
   } |
   Fun {
     fun_name :: AST.Ident annot,
-    fun_args :: [AST.Parameter annot],
+    fun_args :: [Parameter annot],
     fun_result_annotation :: Maybe (AST.Expr annot),
+    fun_return :: CythonType,
     fun_body :: Suite annot,
     stmt_annot :: annot
   } |
@@ -75,13 +69,22 @@ data Statement annot =
     decorated_def :: Statement annot,
     stmt_annot :: annot
   } |
-  CDef {
-    var_name :: AST.Ident annot,
-    var_value :: Maybe (AST.Expr annot),
+  Assign {
+    assign_to :: [Expr annot],
+    assign_expr :: Expr annot,
+    stmt_annot :: annot
+  } |
+  CDefSuite {
+    var_list :: Map.Map String CythonType,
+    stmt_annot :: annot
+  } |
+  CTypeDef {
+    typedef_ident :: AST.Ident annot,
+    typedef_type :: CythonType,
     stmt_annot :: annot
   } |
   Statement (AST.Statement annot)
-  deriving (Eq,Ord,Show,Typeable,Data,Functor)
+  deriving (Eq,Ord,Show,Functor)
 
 instance AST.Annotated Statement where
   annot stmt = stmt_annot stmt
@@ -92,7 +95,29 @@ data Handler annot =
     handler_suite :: Suite annot,
     handler_annot :: annot
   }
-  deriving (Eq,Ord,Show,Typeable,Data,Functor)
+  deriving (Eq,Ord,Show,Functor)
 
 instance AST.Annotated Handler where
   annot handler = handler_annot handler
+
+data Parameter annot =
+  Param {
+    param_type :: CythonType,
+    param_name :: AST.Ident annot,
+    param_py_annotation :: Maybe (AST.Expr annot),
+    param_default :: Maybe (AST.Expr annot),
+    param_annot :: annot
+  } |
+  Parameter (AST.Parameter annot)
+  deriving (Eq,Ord,Show,Functor)
+
+data Expr annot =
+  AddressOf {
+    address_of :: Expr annot,
+    expr_annot :: annot
+  } |
+  Expr (AST.Expr annot)
+  deriving (Eq,Ord,Show,Functor)
+
+instance AST.Annotated Expr where
+  annot expr = expr_annot expr

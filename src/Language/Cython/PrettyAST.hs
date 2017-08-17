@@ -2,108 +2,93 @@
 
 module Language.Cython.PrettyAST () where
 
+import qualified Data.Map.Strict as Map
+
 import qualified Language.Python.Common.AST as AST
 import Language.Python.Common.Pretty
 import Language.Python.Common.PrettyAST ()
+import Language.Cython.PrettyType (prettyType)
 import Language.Cython.AST
-import Language.Cython.Type
-import Language.Cython.Annotation
 
 indent :: Doc -> Doc
 indent doc = nest 4 doc
 
-instance Pretty (Module (Maybe TypeAnnotation, annot)) where
-  pretty (Module suite _) = pretty suite
+prettySuite :: [Statement a] -> Doc
+prettySuite stmts = vcat $ map pretty stmts
 
-instance Pretty (Suite (Maybe TypeAnnotation, annot)) where
-  pretty (Suite stmts _) = vcat $ map pretty stmts
+instance Pretty (Module annot) where
+  pretty (Module stmts) = prettySuite stmts
 
-optionalKeywordSuite :: String -> (Suite (Maybe TypeAnnotation, annot)) -> Doc
-optionalKeywordSuite _ (Suite [] _) = empty
+optionalKeywordSuite :: String -> (Suite annot) -> Doc
+optionalKeywordSuite _ [] = empty
 optionalKeywordSuite keyword stmts =
-  text keyword <> colon $+$ indent (pretty stmts)
+  text keyword <> colon $+$ indent (prettySuite stmts)
 
 prettyOptionalList :: Pretty a => [a] -> Doc
 prettyOptionalList [] = empty
 prettyOptionalList list = parens $ commaList list
 
-prettyGuards :: [(AST.Expr (Maybe TypeAnnotation, annot),
-  Suite (Maybe TypeAnnotation, annot))] -> Doc
+prettyGuards :: [(AST.Expr annot, Suite annot)] -> Doc
 prettyGuards [] = empty
 prettyGuards ((cond,body):guards) =
-  text "elif" <+> pretty cond <> colon $+$ indent (pretty body) $+$
+  text "elif" <+> pretty cond <> colon $+$ indent (prettySuite body) $+$
   prettyGuards guards
 
-instance Pretty (Statement (Maybe TypeAnnotation, annot)) where
+instance Pretty (Statement annot) where
   pretty stmt@(While {}) =
     text "while" <+> pretty (while_cond stmt) <> colon $+$
-    indent (pretty (while_body stmt)) $+$ optionalKeywordSuite "else" (while_else stmt)
+    indent (prettySuite (while_body stmt)) $+$ optionalKeywordSuite "else" (while_else stmt)
   pretty stmt@(For {}) =
     text "for" <+> commaList (for_targets stmt) <+> text "in" <+> pretty (for_generator stmt) <> colon $+$
-    indent (pretty (for_body stmt)) $+$ optionalKeywordSuite "else" (for_else stmt)
+    indent (prettySuite (for_body stmt)) $+$ optionalKeywordSuite "else" (for_else stmt)
   pretty stmt@(Fun {}) =
-    text "def" <+> pretty (fun_name stmt) <> parens (commaList (fun_args stmt)) <+>
+    text "cdef" <+> pretty (fun_return stmt) <+> pretty (fun_name stmt) <> parens (commaList (fun_args stmt)) <+>
     perhaps (fun_result_annotation stmt) (text "->") <+>
-    pretty (fun_result_annotation stmt) <> colon $+$ indent (pretty (fun_body stmt))
+    pretty (fun_result_annotation stmt) <> colon $+$ indent (prettySuite (fun_body stmt))
   pretty stmt@(Class {}) =
     text "class" <+> pretty (class_name stmt) <> prettyOptionalList (class_args stmt) <>
-    colon $+$ indent (pretty (class_body stmt))
+    colon $+$ indent (prettySuite (class_body stmt))
   pretty (Conditional { cond_guards = guards, cond_else = optionalElse }) =
     case guards of
       (cond,body):xs ->
-        text "if" <+> pretty cond <> colon $+$ indent (pretty body) $+$
+        text "if" <+> pretty cond <> colon $+$ indent (prettySuite body) $+$
         prettyGuards xs $+$
         optionalKeywordSuite "else" optionalElse
       [] -> error "Attempt to pretty print conditional statement with empty guards"
   pretty (Try { try_body = body, try_excepts = handlers, try_else = optionalElse, try_finally = finally}) =
-    text "try" <> colon $+$ indent (pretty body) $+$
+    text "try" <> colon $+$ indent (prettySuite body) $+$
     prettyHandlers handlers $+$ optionalKeywordSuite "else" optionalElse $+$
     optionalKeywordSuite "finally" finally
   pretty (With { with_context = context, with_body = body }) =
     text "with" <+> hcat (punctuate comma (map prettyWithContext context)) <+> colon $+$
-    indent (pretty body)
+    indent (prettySuite body)
   pretty (Decorated { decorated_decorators = decs, decorated_def = stmt}) =
     vcat (map pretty decs) $+$ pretty stmt
-  pretty (CDef ident expr (typ, _)) = text "cdef" <+>
-    maybe (text "object") pretty typ <+> pretty ident <+>
-    maybe empty (\e -> text "=" <+> pretty e) expr
+  pretty (Assign { assign_to = p, assign_expr = e }) =
+    commaList p <+> equals <+> pretty e
+  pretty (CDefSuite vars _) = text "cdef:" $+$ indent (Map.foldrWithKey
+    (\k v d -> d $+$ pretty v <+> pretty k) empty vars)
+  pretty (CTypeDef { typedef_ident = i, typedef_type = t }) =
+    text "ctypedef" <+> prettyType t (pretty i)
   pretty (Statement s) = pretty s
 
-prettyWithContext :: (AST.Expr (Maybe TypeAnnotation, annot),
-  Maybe (AST.Expr (Maybe TypeAnnotation, annot))) -> Doc
+prettyWithContext :: (AST.Expr annot, Maybe (AST.Expr annot)) -> Doc
 prettyWithContext (e, Nothing) = pretty e
 prettyWithContext (e, Just as) = pretty e <+> text "as" <+> pretty as
 
-prettyHandlers :: [Handler (Maybe TypeAnnotation, annot)] -> Doc
+prettyHandlers :: [Handler annot] -> Doc
 prettyHandlers = foldr (\next rec -> pretty next $+$ rec) empty
 
-instance Pretty (Handler (Maybe TypeAnnotation, annot)) where
+instance Pretty (Handler annot) where
   pretty (Handler { handler_clause = exceptClause, handler_suite = suite }) =
-    pretty exceptClause <> colon $+$ indent (pretty suite)
+    pretty exceptClause <> colon $+$ indent (prettySuite suite)
 
-instance Pretty (CBasicType) where
-  pretty Char = text "char"
-  pretty Short = text "short"
-  pretty Int = text "int"
-  pretty Long = text "long"
-  pretty LongLong = text "long long"
-  pretty Float = text "float"
-  pretty Double = text "double"
+instance Pretty (Parameter annot) where
+  pretty (Param { param_type = typ, param_name = ident, param_py_annotation = annot, param_default = def }) =
+    pretty typ <+> pretty ident <> (maybe empty (\e -> colon <> pretty e <> space) annot) <> 
+    maybe empty (\e -> equals <> pretty e) def
+  pretty (Parameter p) = pretty p
 
-instance Pretty (CType) where
-  pretty Void = text "void"
-  pretty BInt = text "bint"
-  pretty (Signed t) = pretty t
-  pretty (Unsigned t) = text "unsigned " <+> pretty t
-  pretty (Ptr t) = pretty t <+> text "*"
-
-instance Pretty (CythonType) where
-  pretty (CType t) = pretty t
-  pretty String = text "str"
-  pretty Bytes = text "bytes"
-  pretty Unicode = text "unicode"
-  pretty PythonObject = text "object"
-
-instance Pretty (TypeAnnotation) where
-  pretty (Const typ) = pretty typ
-  pretty _ = text "object"
+instance Pretty (Expr annot) where
+  pretty (AddressOf expr _) = text "&(" <> pretty expr <> pretty ")"
+  pretty (Expr expr) = pretty expr
