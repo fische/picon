@@ -95,11 +95,15 @@ call _ _ _ = error "cannot call non-callable objects"
 callAllStashed' :: [Path] -> Context -> Context
 callAllStashed' [] ctx = ctx
 callAllStashed' (hd:tl) ctx =
-  let convert i [] m = Map.insert (Keyword i) (Type PythonObject) m
-      convert i (t:_) m = Map.insert (Keyword i) t m
-      args =
-        Map.foldrWithKey convert Map.empty . Scope.getParameters hd $ scope ctx
-  in callAllStashed' tl $ Analyzable.Context.call (FuncRef hd) args ctx
+  let newCtx = unstashFunction hd ctx
+      convert i [] m = Map.insert (Keyword i) (Type PythonObject) m
+      convert i ((t@Type{}):_) m = Map.insert (Keyword i) t m
+      convert i (_:l) m = convert i l m
+      params = Scope.getParameters hd $ scope newCtx
+      args = Map.foldrWithKey convert Map.empty params
+  in callAllStashed' tl $ newCtx{
+    scope = Scope.call (FuncRef hd) args $ scope newCtx
+  }
 
 callAllStashed :: Context -> Context
 callAllStashed ctx =
