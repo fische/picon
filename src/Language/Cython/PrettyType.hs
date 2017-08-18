@@ -1,6 +1,4 @@
-module Language.Cython.PrettyType (
-  prettyType
-) where
+module Language.Cython.PrettyType () where
 
 import Language.Python.Common.Pretty
 import Language.Cython.Type
@@ -27,9 +25,3 @@ instance Pretty (CythonType) where
   pretty Bytes = text "bytes"
   pretty Unicode = text "unicode"
   pretty PythonObject = text "object"
-  pretty Func{} = empty
-  pretty (TypeDef t) = pretty t
-
-prettyType :: CythonType -> Doc -> Doc
-prettyType (Func r) d = pretty r <+> text "(*" <> d <> text ")()"
-prettyType t d = pretty t <+> d

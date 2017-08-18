@@ -78,11 +78,6 @@ data Statement annot =
     var_list :: Map.Map String CythonType,
     stmt_annot :: annot
   } |
-  CTypeDef {
-    typedef_ident :: AST.Ident annot,
-    typedef_type :: CythonType,
-    stmt_annot :: annot
-  } |
   Statement (AST.Statement annot)
   deriving (Eq,Ord,Show,Functor)
 

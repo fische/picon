@@ -29,9 +29,7 @@ data CythonType =
   String |
   Bytes |
   Unicode |
-  PythonObject |
-  Func CythonType |
-  TypeDef String
+  PythonObject
   deriving (Eq,Ord,Show)
 
 -- TODO Handle typedefs
