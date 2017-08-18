@@ -6,6 +6,7 @@ module Analyzable (
 ) where
 
 import qualified Data.Map.Strict as Map
+import Data.Maybe (fromMaybe)
 
 import qualified Language.Python.Common.AST as AST
 import Language.Python.Common.SrcLocation (SrcSpan(..))
@@ -13,11 +14,33 @@ import Language.Cython.Type
 
 import Analyzable.Context
 
+getOpType :: AST.Op a -> Maybe Type
+getOpType AST.And{} = Just . Type $ CType BInt
+getOpType AST.Or{} = Just . Type $ CType BInt
+getOpType AST.Not{} = Just . Type $ CType BInt
+getOpType AST.Exponent{} = Just . Type $ CType BInt
+getOpType AST.LessThan{} = Just . Type $ CType BInt
+getOpType AST.GreaterThan{} = Just . Type $ CType BInt
+getOpType AST.Equality{} = Just . Type $ CType BInt
+getOpType AST.GreaterThanEquals{} = Just . Type $ CType BInt
+getOpType AST.LessThanEquals{} = Just . Type $ CType BInt
+getOpType AST.NotEquals{} = Just . Type $ CType BInt
+getOpType AST.NotEqualsV2{} = Just . Type $ CType BInt
+getOpType AST.In{} = Just . Type $ CType BInt
+getOpType AST.Is{} = Just . Type $ CType BInt
+getOpType AST.IsNot{} = Just . Type $ CType BInt
+getOpType AST.NotIn{} = Just . Type $ CType BInt
+getOpType _ = Nothing
+
 getExprType :: Context -> AST.Expr a -> Type
 getExprType ctx AST.Var{AST.var_ident = ident} =
   getVariableReference (AST.ident_string ident) ctx
 getExprType ctx AST.Call{ AST.call_fun = f } =
   getReturnType (getExprType ctx f) ctx
+getExprType ctx AST.BinaryOp{ AST.operator = o, AST.left_op_arg = l } =
+  fromMaybe (getExprType ctx l) $ getOpType o
+getExprType ctx AST.UnaryOp{ AST.operator = o, AST.op_arg = a } =
+  fromMaybe (getExprType ctx a) $ getOpType o
 getExprType _ AST.Int{} = Type . CType $ Signed Int
 getExprType _ AST.LongInt{} = Type . CType $ Signed Long
 getExprType _ AST.Float{} = Type . CType $ Signed Double
