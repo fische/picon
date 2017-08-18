@@ -2,6 +2,8 @@ module Main where
 
 import qualified System.Environment as Env (getArgs)
 
+import Control.Monad.State (State, evalState)
+
 import qualified Language.Python.Version3 as Python3 (parseModule)
 import Language.Python.Common.Pretty (prettyText)
 import Language.Python.Common.PrettyParseError ()
@@ -11,8 +13,6 @@ import Language.Python.Common.SrcLocation (SrcSpan(..))
 
 import Analyzable
 import Cythonizable
-
-import Control.Monad.State (State, evalState)
 
 main :: IO ()
 main = do

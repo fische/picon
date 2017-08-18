@@ -21,6 +21,7 @@ module Scope (
 ) where
 
 import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
 import Data.Maybe
 import Data.Bool
 import Monadic.Map
@@ -33,11 +34,12 @@ import Language.Cython.Type
 data Argument =
   Position Int |
   Keyword String
-  deriving (Eq,Ord)
+  deriving (Eq,Ord,Show)
 
 data Parameter =
   Positional String |
   NonPositional String
+  deriving (Eq,Ord,Show)
 
 -- TODO Return references?
 data Type =
@@ -55,11 +57,12 @@ data Type =
     identifier :: String,
     refering :: Path
   }
+  deriving (Eq,Ord,Show)
 
 data Path =
   Node ((String, Int), Path) |
   Leaf
-  deriving (Eq,Ord)
+  deriving (Eq,Ord,Show)
 
 append :: Path -> Path -> Path
 append Leaf p2 = p2
@@ -86,6 +89,7 @@ data Scope =
     parameterPosition :: [String],
     parameterType :: Map.Map String [Type]
   }
+  deriving (Eq,Ord,Show)
 
 
 
@@ -237,7 +241,7 @@ exitBlock' curr block
         addConditionalType k v =
           let found = Map.lookup k (variables curr)
           in maybe (mergeHead [] v) (\l -> mergeHead l v) found
-    in curr {
+    in block {
       variables = Map.mapWithKey addConditionalType (variables block)
     }
   | otherwise =
@@ -312,7 +316,7 @@ call VarRef{ types = (hd:_) } args ctx = call hd args ctx
 call _ _ _ = error "cannot call non-callable objects"
 
 getReturnType' :: Type -> Type
-getReturnType' (VarRef { types = [] }) = Type . CType $ Void
+getReturnType' (VarRef { types = [] }) = Type $ CType Void
 getReturnType' (VarRef { types = (hd:_) }) = hd
 getReturnType' (Either(t1, t2)) = Either(getReturnType' t1, getReturnType' t2)
 getReturnType' t = t
@@ -352,25 +356,39 @@ getParameters p s = parameterType $ get p s
 
 
 
-getCythonType' :: Scope -> Type -> CythonType
-getCythonType' global (Either(t1, t2)) =
-  mergeTypes [(getCythonType' global t1), (getCythonType' global t2)]
-getCythonType' _ (Type t) = t
-getCythonType' global (VarRef{ types = t }) =
-  mergeTypes $ map (getCythonType' global) t
-getCythonType' global (ParamRef{ identifier = i, refering = p }) =
-  let s = get p global
-      err = error ("can not find parameter " ++ i)
-  in getCythonType global . Map.findWithDefault err i $ parameterType s
+getCythonType' :: Scope -> Type ->
+  State.State (Set.Set Type) (Maybe CythonType)
+getCythonType' _ (Type t) = return (Just t)
+getCythonType' global (Either(t1, t2)) = do
+  ct1 <- getCythonType' global t1
+  ct2 <- getCythonType' global t2
+  return . Just . mergeTypes $ catMaybes [ct1, ct2]
+getCythonType' global (VarRef{ types = t })  = do
+  l <- mapM (getCythonType' global) t
+  return . Just . mergeTypes $ catMaybes l
+getCythonType' global ref@(ParamRef{ identifier = i, refering = p }) = do
+  set <- State.get
+  if Set.member ref set
+    then
+      return $ Nothing
+    else do
+      let s = get p global
+          params = parameterType s
+          err = error ("can not find parameter " ++ i)
+      State.put $ Set.insert ref set
+      l <- mapM (getCythonType' global) $ Map.findWithDefault err i params
+      return . Just . mergeTypes $ catMaybes l
 getCythonType' _ (FuncRef{}) =
   error "function pointers are not yet supported"
 
 getCythonType :: Scope -> [Type] -> CythonType
-getCythonType s t = mergeTypes (map (getCythonType' s) t)
+getCythonType s t =
+  let l = State.evalState (mapM (getCythonType' s) t) Set.empty
+  in mergeTypes $ catMaybes l
 
 getFunctionReturnType :: Scope -> Scope -> CythonType
 getFunctionReturnType global (Function{returnType = r}) =
-  maybe (CType Void) (getCythonType' global) r
+  maybe (CType Void) (\t -> getCythonType global [t]) r
 getFunctionReturnType _ _ =
   error "cannot get return type of something else than a function"
 
