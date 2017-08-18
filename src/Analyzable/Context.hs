@@ -13,11 +13,14 @@ module Analyzable.Context (
   Analyzable.Context.getReturnType,
   Analyzable.Context.addParameter,
   Analyzable.Context.enablePositionalParametersFlag,
-  Analyzable.Context.disablePositionalParametersFlag
+  Analyzable.Context.disablePositionalParametersFlag,
+  Analyzable.Context.callAllStashed
 ) where
 
 import qualified Data.Map.Strict as Map
 import Data.Bool
+
+import Language.Cython.Type
 
 import Scope
 
@@ -88,6 +91,19 @@ call t@FuncRef{ refering = p } args ctx =
 call VarRef{ types = (hd:_) } args ctx =
   Analyzable.Context.call hd args ctx
 call _ _ _ = error "cannot call non-callable objects"
+
+callAllStashed' :: [Path] -> Context -> Context
+callAllStashed' [] ctx = ctx
+callAllStashed' (hd:tl) ctx =
+  let convert i [] m = Map.insert (Keyword i) (Type PythonObject) m
+      convert i (t:_) m = Map.insert (Keyword i) t m
+      args =
+        Map.foldrWithKey convert Map.empty . Scope.getParameters hd $ scope ctx
+  in callAllStashed' tl $ Analyzable.Context.call (FuncRef hd) args ctx
+
+callAllStashed :: Context -> Context
+callAllStashed ctx =
+  callAllStashed' (Map.keys $ functionsStash ctx) ctx
 
 getReturnType :: Type -> Context -> Type
 getReturnType t ctx = Scope.getReturnType t (scope ctx)

@@ -13,6 +13,7 @@ module Scope (
   call,
   getReturnType,
   addParameter,
+  getParameters,
   getLocalVariableType,
   getLocalVariables,
   getFunctionReturnType,
@@ -225,21 +226,22 @@ resolveReferences p s =
 
 -- Operations between scopes
 exitBlock' :: Scope -> Scope -> Scope
-exitBlock' curr@Module{} block@Module{} =
-  let mergeHead [] [] = []
-      mergeHead [] l2 = (Either (Type . CType $ Void, head l2)):l2
-      mergeHead l1 [] = (head l1):l1
-      mergeHead l1 l2
-        | (length l1) == (length l2) = l1
-        | otherwise = (Either (head l1, head l2)):l2
-      addConditionalType k v =
-        let found = Map.lookup k (variables curr)
-        in maybe (mergeHead [] v) (\l -> mergeHead l v) found
-  in curr {
-    variables = Map.mapWithKey addConditionalType (variables block)
-  }
-exitBlock' _ _ =
-  error "blocks's scope should use the same type than their outer scope"
+exitBlock' curr block
+  | (path curr) == (path block) =
+    let mergeHead [] [] = []
+        mergeHead [] l2 = (Either (Type . CType $ Void, head l2)):l2
+        mergeHead l1 [] = (head l1):l1
+        mergeHead l1 l2
+          | (length l1) == (length l2) = l1
+          | otherwise = (Either (head l1, head l2)):l2
+        addConditionalType k v =
+          let found = Map.lookup k (variables curr)
+          in maybe (mergeHead [] v) (\l -> mergeHead l v) found
+    in curr {
+      variables = Map.mapWithKey addConditionalType (variables block)
+    }
+  | otherwise =
+    error "blocks's scope should use the same type than their outer scope"
 
 exitBlock :: Path -> Scope -> Scope -> Scope
 exitBlock = merge exitBlock'
@@ -317,7 +319,7 @@ getReturnType' t = t
 
 getReturnType :: Type -> Scope -> Type
 getReturnType (FuncRef{ refering = p }) s =
-  maybe (Type . CType $ Void) getReturnType' (returnType $ get p s)
+  maybe (Type . CType $ Void) getReturnType' . returnType $ get p s
 getReturnType (VarRef{ types = (hd:_) }) s = getReturnType hd s
 getReturnType t _ = t
 
@@ -344,6 +346,9 @@ addParameter' (NonPositional i) t s =
 
 addParameter :: Parameter -> Maybe Type -> Path -> Scope -> Scope
 addParameter param t p s = update (addParameter' param t) p s
+
+getParameters :: Path -> Scope -> Map.Map String [Type]
+getParameters p s = parameterType $ get p s
 
 
 
