@@ -8,6 +8,7 @@ module Scope (
   getVariableReference,
   exitBlock,
   addFunction,
+  addClass,
   assignVariable,
   returnVariable,
   call,
@@ -17,7 +18,7 @@ module Scope (
   getLocalVariableType,
   getLocalVariables,
   getFunctionReturnType,
-  dropNextFunction
+  dropNextScope
 ) where
 
 import qualified Data.Map.Strict as Map
@@ -41,7 +42,7 @@ data Parameter =
   NonPositional String
   deriving (Eq,Ord,Show)
 
--- TODO Return references?
+-- TODO Return references
 data Type =
   Either (Type, Type) |
   Type CythonType |
@@ -50,11 +51,14 @@ data Type =
     refering :: Path,
     types :: [Type]
   } |
+  ParamRef {
+    identifier :: String,
+    refering :: Path
+  } |
   FuncRef {
     refering :: Path
   } |
-  ParamRef {
-    identifier :: String,
+  ClassRef {
     refering :: Path
   }
   deriving (Eq,Ord,Show)
@@ -63,6 +67,11 @@ data Path =
   Node ((String, Int), Path) |
   Leaf
   deriving (Eq,Ord,Show)
+
+lastNode :: Path -> (String, Int)
+lastNode Leaf = error "this path does not have any node"
+lastNode (Node(_, n@Node{})) = lastNode n
+lastNode (Node(i, _)) = i
 
 append :: Path -> Path -> Path
 append Leaf p2 = p2
@@ -78,12 +87,17 @@ sub (Node(idx1, p1)) (Node(idx2, p2))
 data Scope =
   Module {
     path :: Path,
-    functions :: Map.Map String [Scope],
+    scopes :: Map.Map String [Scope],
+    variables :: Map.Map String [Type]
+  } |
+  Class {
+    path :: Path,
+    scopes :: Map.Map String [Scope],
     variables :: Map.Map String [Type]
   } |
   Function {
     path :: Path,
-    functions :: Map.Map String [Scope],
+    scopes :: Map.Map String [Scope],
     variables :: Map.Map String [Type],
     returnType :: Maybe Type,
     parameterPosition :: [String],
@@ -117,9 +131,9 @@ add' i p s (Just l) = do
 add :: String -> Scope -> Path -> Scope -> (Scope, Path)
 add ident body p s =
   let addToScope v = do
-        new <- alterM (add' ident p body) ident (functions v)
+        new <- alterM (add' ident p body) ident (scopes v)
         return $ v {
-          functions = new
+          scopes = new
         }
   in State.runState (updateM addToScope p s) Leaf
 
@@ -127,7 +141,7 @@ get :: Path -> Scope -> Scope
 get Leaf s = s
 get (Node((ident, idx), p)) s =
   let err = error "next path level not found"
-      found = Map.lookup ident (functions s)
+      found = Map.lookup ident (scopes s)
   in maybe err (\l -> get p $ l !! (reverseIndex l idx)) found
 
 update :: (Scope -> Scope) -> Path -> Scope -> Scope
@@ -138,7 +152,7 @@ update f (Node ((ident, idx), p)) s =
         let (hd, tl) = splitAt (reverseIndex l idx) l
         in Just $ (hd ++ ((update f p (head tl)):(tail tl)))
   in s {
-    functions = Map.alter (maybe err updateScope) ident (functions s)
+    scopes = Map.alter (maybe err updateScope) ident (scopes s)
   }
 
 updateM :: (Monad m) => (Scope -> m Scope) -> Path -> Scope -> m Scope
@@ -149,9 +163,9 @@ updateM f (Node ((ident, idx), p)) s = do
         let (hd, tl) = splitAt (reverseIndex l idx) l
         v <- updateM f p $ head tl
         return . Just $ (hd ++ v:(tail tl))
-  newFunctions <- alterM (maybe err updateScope) ident (functions s)
+  newFunctions <- alterM (maybe err updateScope) ident (scopes s)
   return s {
-    functions = newFunctions
+    scopes = newFunctions
   }
 
 merge :: (Scope -> Scope -> Scope) -> Path -> Scope -> Scope -> Scope
@@ -178,7 +192,7 @@ getVariableReference' i (Node((ident, idx), p)) s =
               refering = path s
             }) $ Map.lookup i (variables s)
         in getVariableReference' i p func <|> ref
-  in maybe err f $ Map.lookup ident (functions s)
+  in maybe err f $ Map.lookup ident (scopes s)
 
 getVariableReference :: String -> Path -> Scope -> Type
 getVariableReference i p s =
@@ -192,13 +206,13 @@ checkReferencePath' i (Node((ident, idx), p)) s =
       f l =
         let func = l !! (reverseIndex l idx)
         in checkReferencePath' i p func
-  in Map.member i (variables s) || maybe err f (Map.lookup ident (functions s))
+  in Map.member i (variables s) || maybe err f (Map.lookup ident (scopes s))
 
 checkReferencePath :: String -> Path -> Scope -> Maybe a
 checkReferencePath i (Node((ident, idx), p)) s =
   let err = error ("binding to variable " ++ i ++ " has been overriden")
       f l = l !! (reverseIndex l idx)
-      childScope = maybe err f (Map.lookup ident (functions s))
+      childScope = maybe err f (Map.lookup ident (scopes s))
   in bool Nothing err $ checkReferencePath' i p childScope
 checkReferencePath _ Leaf _ = Nothing
 
@@ -216,10 +230,14 @@ resolveType p s (Either(t1, t2)) =
 resolveType _ _ t = t
 
 resolveReferences' :: (Type -> Type) -> Scope -> Scope
-resolveReferences' resolve s =
+resolveReferences' resolve s@Function{} =
   s {
     variables = Map.map (map resolve) $ variables s,
     returnType = resolve <$> returnType s
+  }
+resolveReferences' resolve s =
+  s {
+    variables = Map.map (map resolve) $ variables s
   }
 
 resolveReferences :: Path -> Scope -> Scope
@@ -254,11 +272,23 @@ addFunction :: String -> Path -> Scope -> (Scope, Path)
 addFunction i p s =
   let (fScope, fPath) = add i Function{
         path = Leaf,
-        functions = Map.empty,
+        scopes = Map.empty,
         variables = Map.empty,
         returnType = Nothing,
         parameterPosition = [],
         parameterType = Map.empty
+      } p s
+      ref = FuncRef{
+        refering = fPath
+      }
+  in (assignVariable i ref p fScope, fPath)
+
+addClass :: String -> Path -> Scope -> (Scope, Path)
+addClass i p s =
+  let (fScope, fPath) = add i Class{
+        path = Leaf,
+        scopes = Map.empty,
+        variables = Map.empty
       } p s
       ref = FuncRef{
         refering = fPath
@@ -271,7 +301,7 @@ addFunction i p s =
 newModule :: Scope
 newModule = Module {
   path = Leaf,
-  functions = Map.empty,
+  scopes = Map.empty,
   variables = Map.empty
 }
 
@@ -323,7 +353,10 @@ getReturnType' t = t
 
 getReturnType :: Type -> Scope -> Type
 getReturnType (FuncRef{ refering = p }) s =
-  maybe (Type . CType $ Void) getReturnType' . returnType $ get p s
+  case get p s of
+    f@Function{} -> maybe (Type . CType $ Void) getReturnType' $ returnType f
+    Class{} -> ClassRef{ refering = p }
+    _ -> error "cannot get return type of non callable objects"
 getReturnType (VarRef{ types = (hd:_) }) s = getReturnType hd s
 getReturnType t _ = t
 
@@ -378,6 +411,8 @@ getCythonType' global ref@(ParamRef{ identifier = i, refering = p }) = do
       State.put $ Set.insert ref set
       l <- mapM (getCythonType' global) $ Map.findWithDefault err i params
       return . Just . mergeTypes $ catMaybes l
+getCythonType' _ (ClassRef{ refering = p }) =
+  return . Just . UserDefined . fst $ lastNode p
 getCythonType' _ (FuncRef{}) =
   error "function pointers are not yet supported"
 
@@ -405,28 +440,28 @@ getLocalVariables' global k v acc = Map.insert k (getCythonType global v) acc
 getLocalVariables :: Scope -> Scope -> Map.Map String CythonType
 getLocalVariables global Function{parameterType = p, variables = v} =
   Map.foldrWithKey (getLocalVariables' global) Map.empty $ Map.difference v p
-getLocalVariables global Module{variables = v} =
-  Map.foldrWithKey (getLocalVariables' global) Map.empty v
+getLocalVariables global s =
+  Map.foldrWithKey (getLocalVariables' global) Map.empty $ variables s
 
-dropNextFunction' :: Maybe [Scope] -> State.State Scope (Maybe [Scope])
-dropNextFunction' Nothing = error "no more function to drop"
-dropNextFunction' (Just []) = error "no more function to drop"
-dropNextFunction' (Just (hd:tl)) = do
+dropNextScope' :: Maybe [Scope] -> State.State Scope (Maybe [Scope])
+dropNextScope' Nothing = error "no more function to drop"
+dropNextScope' (Just []) = error "no more function to drop"
+dropNextScope' (Just (hd:tl)) = do
   State.put hd
   return $ Just tl
 
-dropNextFunction :: String -> Scope -> (Scope, Scope)
-dropNextFunction i curr =
+dropNextScope :: String -> Scope -> (Scope, Scope)
+dropNextScope i curr =
   let emptyFunc = Function{
         path = Leaf,
-        functions = Map.empty,
+        scopes = Map.empty,
         variables = Map.empty,
         returnType = Nothing,
         parameterPosition = [],
         parameterType = Map.empty
       }
       (newFunctions, dropped) =
-        State.runState (alterM dropNextFunction' i $ functions curr) emptyFunc
+        State.runState (alterM dropNextScope' i $ scopes curr) emptyFunc
   in (curr{
-    functions = newFunctions
+    scopes = newFunctions
   }, dropped)

@@ -4,7 +4,7 @@ module Cythonizable.Context (
   Cythonizable.Context.getLocalVariableType,
   Cythonizable.Context.getLocalVariables,
   Cythonizable.Context.getFunctionReturnType,
-  Cythonizable.Context.dropNextFunction
+  Cythonizable.Context.dropNextScope
 ) where
 
 import qualified Data.Map.Strict as Map
@@ -46,10 +46,10 @@ getFunctionReturnType = do
   ctx <- get
   return . Scope.getFunctionReturnType (globalScope ctx) $ currentScope ctx
 
-dropNextFunction :: String -> State Context Context
-dropNextFunction i = do
+dropNextScope :: String -> State Context Context
+dropNextScope i = do
   ctx <- get
-  let (newScope, fun) = Scope.dropNextFunction i (currentScope ctx)
+  let (newScope, fun) = Scope.dropNextScope i (currentScope ctx)
   put ctx{
     currentScope = newScope
   }

@@ -46,7 +46,7 @@ instance Pretty (Statement annot) where
     perhaps (fun_result_annotation stmt) (text "->") <+>
     pretty (fun_result_annotation stmt) <> colon $+$ indent (prettySuite (fun_body stmt))
   pretty stmt@(Class {}) =
-    text "class" <+> pretty (class_name stmt) <> prettyOptionalList (class_args stmt) <>
+    text "cdef class" <+> pretty (class_name stmt) <> prettyOptionalList (class_args stmt) <>
     colon $+$ indent (prettySuite (class_body stmt))
   pretty (Conditional { cond_guards = guards, cond_else = optionalElse }) =
     case guards of

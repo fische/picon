@@ -8,6 +8,8 @@ module Analyzable.Context (
   Analyzable.Context.assignVariable,
   Analyzable.Context.returnVariable,
   Analyzable.Context.exitBlock,
+  Analyzable.Context.enterClass,
+  Analyzable.Context.exitClass,
   Analyzable.Context.stashFunction,
   Analyzable.Context.call,
   Analyzable.Context.getReturnType,
@@ -58,6 +60,20 @@ exitBlock :: Context -> Context -> Context
 exitBlock curr block =
   block {
     scope = Scope.exitBlock (position curr) (scope curr) (scope block)
+  }
+
+enterClass :: String -> Context -> Context
+enterClass i ctx =
+  let (newScope, newPath) = Scope.addClass i (position ctx) $ scope ctx
+  in ctx{
+    scope = newScope,
+    position = newPath
+  }
+
+exitClass :: Context -> Context -> Context
+exitClass curr c =
+  c {
+    position = position curr
   }
 
 stashFunction :: String -> (Context -> Context) -> Context -> Context

@@ -25,3 +25,4 @@ instance Pretty (CythonType) where
   pretty Bytes = text "bytes"
   pretty Unicode = text "unicode"
   pretty PythonObject = text "object"
+  pretty (UserDefined s) = text s

@@ -36,7 +36,7 @@ instance Cythonizable (AST.Module SrcSpan) (Module SrcSpan) where
 
 instance Cythonizable (AST.Statement SrcSpan) (Statement SrcSpan) where
   cythonize (AST.Fun name args r body annot) = do
-    funCtx <- dropNextFunction $ AST.ident_string name
+    funCtx <- dropNextScope $ AST.ident_string name
     let (returnType, retCtx) = runState getFunctionReturnType funCtx
         (vars, varsCtx) = runState getLocalVariables retCtx
         (cargs, argsCtx) = runState (cythonize args) varsCtx
@@ -48,6 +48,18 @@ instance Cythonizable (AST.Statement SrcSpan) (Statement SrcSpan) where
     bool
       (return $ Fun name cargs r returnType cbody annot)
       (return $ Fun name cargs r returnType (cdef:cbody) annot)
+      (not $ null vars)
+  cythonize (AST.Class name args body annot) = do
+    classCtx <- dropNextScope $ AST.ident_string name
+    let (vars, varsCtx) = runState getLocalVariables classCtx
+        (cbody, _) = runState (cythonize body) varsCtx
+        cdef = CDefSuite {
+          var_list = vars,
+          stmt_annot = SpanEmpty
+        }
+    bool
+      (return $ Class name args cbody annot)
+      (return $ Class name args (cdef:cbody) annot)
       (not $ null vars)
   cythonize s = return $ Statement s
 

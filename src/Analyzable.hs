@@ -135,7 +135,9 @@ instance Analyzable (AST.Statement SrcSpan) where
   analyze (AST.Fun name args _ body _) ctx =
     let parse = analyze body . analyze args . enablePositionalParametersFlag
     in stashFunction (AST.ident_string name) parse ctx
-  analyze (AST.Class _ args body _) ctx = analyze body $ analyze args ctx
+  -- TODO Handle inheritance
+  analyze (AST.Class name _ body _) ctx =
+    exitClass ctx . analyze body $ enterClass (AST.ident_string name) ctx
   analyze (AST.Conditional guards e _) ctx =
     let guardsCtx = analyze guards ctx
     in exitBlock guardsCtx $ analyze e guardsCtx
