@@ -13,11 +13,14 @@ module Analyzable.Context (
   Analyzable.Context.getReturnType,
   Analyzable.Context.addParameter,
   Analyzable.Context.enablePositionalParametersFlag,
-  Analyzable.Context.disablePositionalParametersFlag
+  Analyzable.Context.disablePositionalParametersFlag,
+  Analyzable.Context.callAllStashed
 ) where
 
 import qualified Data.Map.Strict as Map
 import Data.Bool
+
+import Language.Cython.Type
 
 import Scope
 
@@ -72,22 +75,39 @@ unstashFunction p ctx =
       (parse, stash) = Map.updateLookupWithKey del p (functionsStash ctx)
   in maybe ctx (\f ->
       let newCtx = f ctx {
-            position = p
+            position = p,
+            functionsStash = stash
           }
       in newCtx {
-        position = (position ctx),
-        functionsStash = stash
+        position = (position ctx)
       }) parse
 
 call :: Type -> Map.Map Argument Type -> Context -> Context
 call t@FuncRef{ refering = p } args ctx =
   let newCtx = unstashFunction p ctx
-  in ctx{
+  in newCtx{
     scope = Scope.call t args $ scope newCtx
   }
 call VarRef{ types = (hd:_) } args ctx =
   Analyzable.Context.call hd args ctx
 call _ _ _ = error "cannot call non-callable objects"
+
+callAllStashed' :: [Path] -> Context -> Context
+callAllStashed' [] ctx = ctx
+callAllStashed' (hd:tl) ctx =
+  let newCtx = unstashFunction hd ctx
+      convert i [] m = Map.insert (Keyword i) (Type PythonObject) m
+      convert i ((t@Type{}):_) m = Map.insert (Keyword i) t m
+      convert i (_:l) m = convert i l m
+      params = Scope.getParameters hd $ scope newCtx
+      args = Map.foldrWithKey convert Map.empty params
+  in callAllStashed' tl $ newCtx{
+    scope = Scope.call (FuncRef hd) args $ scope newCtx
+  }
+
+callAllStashed :: Context -> Context
+callAllStashed ctx =
+  callAllStashed' (Map.keys $ functionsStash ctx) ctx
 
 getReturnType :: Type -> Context -> Type
 getReturnType t ctx = Scope.getReturnType t (scope ctx)
