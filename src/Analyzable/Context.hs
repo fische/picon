@@ -75,17 +75,17 @@ unstashFunction p ctx =
       (parse, stash) = Map.updateLookupWithKey del p (functionsStash ctx)
   in maybe ctx (\f ->
       let newCtx = f ctx {
-            position = p
+            position = p,
+            functionsStash = stash
           }
       in newCtx {
-        position = (position ctx),
-        functionsStash = stash
+        position = (position ctx)
       }) parse
 
 call :: Type -> Map.Map Argument Type -> Context -> Context
 call t@FuncRef{ refering = p } args ctx =
   let newCtx = unstashFunction p ctx
-  in ctx{
+  in newCtx{
     scope = Scope.call t args $ scope newCtx
   }
 call VarRef{ types = (hd:_) } args ctx =
