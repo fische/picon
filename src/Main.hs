@@ -13,7 +13,6 @@ import Language.Python.Common.SrcLocation (SrcSpan(..))
 
 import Analyzable
 import Cythonizable
-import PrettyScope
 
 main :: IO ()
 main = do
@@ -25,4 +24,4 @@ main = do
         let analysis = callAllStashed $ analyze pymodule newContext
             cython =
               cythonize pymodule :: State Cythonizable.Context (Module SrcSpan)
-        in putStrLn . prettyText $ scope analysis
+        in putStrLn . prettyText . evalState cython $ fromAnalysis analysis

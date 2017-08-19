@@ -24,7 +24,7 @@ import Data.Bool
 
 import Language.Cython.Type
 
-import Scope
+import Analyzable.Scope as Scope
 
 data Context =
   Context {
