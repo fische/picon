@@ -18,8 +18,6 @@ module Analyzable.Scope (
 import qualified Data.Map.Strict as Map
 import Data.Maybe
 
-import Control.Applicative
-
 import Scope
 
 import Language.Cython.Type
@@ -89,27 +87,38 @@ addClass i p s =
       }
   in (assignVariable i ref p fScope, fPath)
 
-getVariableReference' :: String -> Path -> Scope -> Maybe Type
+getReferenceFlag :: Scope -> Bool
+getReferenceFlag Module{} = False
+getReferenceFlag Class{} = False
+getReferenceFlag Function{} = True
+
+getVariableReference' :: String -> Path -> Scope -> Either Bool Type
 getVariableReference' i Leaf s =
   let getHead [] = error ("variable " ++ i ++ " referenced before assignement")
-      getHead (hd:_) = Just hd
-  in maybe Nothing getHead $ Map.lookup i (variables s)
+      getHead (hd:_) = Right hd
+  in maybe (Left $ getReferenceFlag s) getHead $ Map.lookup i (variables s)
 getVariableReference' i (Node((ident, idx), p)) s =
   let err = error "next path level not found"
       f l =
-        let func = l !! reverseIndex l idx
-            ref = maybe Nothing (\t -> Just VarRef{
-              identifier = i,
-              types = [getReferenceType i t],
-              refering = path s
-            }) $ Map.lookup i (variables s)
-        in getVariableReference' i p func <|> ref
+        let getRef flag = maybe
+              (Left $ flag || getReferenceFlag s)
+              (\t ->
+                let getType False = getReferenceType i t
+                    getType True = VarRef{
+                      identifier = i,
+                      types = [getReferenceType i t],
+                      refering = path s
+                    }
+                in Right $ getType flag)
+              (Map.lookup i (variables s))
+            result = getVariableReference' i p (l !! reverseIndex l idx)
+        in either getRef Right result
   in maybe err f $ Map.lookup ident (scopes s)
 
 getVariableReference :: String -> Path -> Scope -> Type
 getVariableReference i p s =
   let err = error ("variable " ++ i ++ " was not found")
-  in fromMaybe err $ getVariableReference' i p s
+  in either err id $ getVariableReference' i p s
 
 assignVariable' :: String -> Type -> Scope -> Scope
 assignVariable' k t s =

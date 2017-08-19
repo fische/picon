@@ -18,10 +18,11 @@ instance Pretty Type where
   pretty (Type t) = pretty t
   pretty (Either (t1, t2)) =
     text "(" <> pretty t1 <+> text "|" <+> pretty t2 <> text ")"
-  pretty VarRef{ types = t } = pretty t
+  pretty VarRef{ identifier = i, types = t } = text "ref(" <> text i <> text ")<" <> pretty t <> text ">"
   pretty ParamRef{ identifier = i } = text "param_ptr(" <> text i <> text ")"
   pretty FuncRef{} = text "fun_ptr"
   pretty ClassRef{} = text "class_ptr"
+  pretty ClassTypeRef{} = text "class_def"
 
 instance Pretty [Type] where
   pretty [] = pretty Void
@@ -40,7 +41,7 @@ instance Pretty (Map.Map String [Scope]) where
 instance Pretty Scope where
   pretty Class{ path = p, variables = v, scopes = s } =
     pretty p <> text ":" $+$
-    pretty v $+$ pretty s
+    nest 4 (pretty v $+$ pretty s)
   pretty Module{ variables = v, scopes = s } = pretty v $+$ pretty s
   pretty Function{ returnType = r, path = p, variables = v, scopes = s } =
     text "<" <+> pretty r <+> text ">" <+> pretty p <> text ":" $+$
