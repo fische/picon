@@ -12,7 +12,8 @@ module Analyzable.Scope (
   call,
   getReturnType,
   addParameter,
-  getParameters
+  getParameters,
+  getAttribute
 ) where
 
 import qualified Data.Map.Strict as Map
@@ -196,3 +197,22 @@ addParameter param t = update (addParameter' param t)
 
 getParameters :: Path -> Scope -> Map.Map String [Type]
 getParameters p s = parameterType $ get p s
+
+getAttribute :: Scope -> Type -> String -> Type
+getAttribute _ VarRef{ identifier = i, types = [] } _ =
+  error ("variable " ++ i ++ " referenced before assignement")
+getAttribute s VarRef{ types = (hd:_) } attr = getAttribute s hd attr
+getAttribute s ClassTypeRef{ refering = p } attr =
+  let err = error ("attribute " ++ attr ++ " was not found")
+      getType [] =
+        error ("attribute " ++ attr ++ " referenced before assignement")
+      getType (hd:_) = hd
+  in maybe err getType . Map.lookup attr . variables $ get p s
+getAttribute s ClassRef{ refering = p } attr =
+  let err = error ("attribute " ++ attr ++ " was not found")
+      getType [] =
+        error ("attribute " ++ attr ++ " referenced before assignement")
+      getType (hd:_) = hd
+  in maybe err getType . Map.lookup attr . variables $ get p s
+getAttribute _ _ _ =
+  error "this expression has no attribute"

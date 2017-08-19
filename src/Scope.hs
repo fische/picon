@@ -22,6 +22,7 @@ import qualified Control.Monad.State as State
 import Language.Cython.Type
 
 -- TODO Return references
+-- TODO Hold members updates within class reference?
 data Type =
   Either (Type, Type) |
   Type CythonType |

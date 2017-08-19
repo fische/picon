@@ -16,7 +16,8 @@ module Analyzable.Context (
   Analyzable.Context.addParameter,
   Analyzable.Context.enablePositionalParametersFlag,
   Analyzable.Context.disablePositionalParametersFlag,
-  Analyzable.Context.callAllStashed
+  Analyzable.Context.callAllStashed,
+  Analyzable.Context.getAttribute
 ) where
 
 import qualified Data.Map.Strict as Map
@@ -146,3 +147,6 @@ disablePositionalParametersFlag :: Context -> Context
 disablePositionalParametersFlag ctx = ctx{
   positionalParameters = False
 }
+
+getAttribute :: Context -> Type -> String -> Type
+getAttribute ctx = Scope.getAttribute (scope ctx)

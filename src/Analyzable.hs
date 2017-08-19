@@ -33,7 +33,7 @@ getOpType AST.NotIn{} = Just . Type $ CType BInt
 getOpType _ = Nothing
 
 getExprType :: Context -> AST.Expr a -> Type
-getExprType ctx AST.Var{AST.var_ident = ident} =
+getExprType ctx AST.Var{ AST.var_ident = ident } =
   getVariableReference (AST.ident_string ident) ctx
 getExprType ctx AST.Call{ AST.call_fun = f } =
   getReturnType (getExprType ctx f) ctx
@@ -41,6 +41,8 @@ getExprType ctx AST.BinaryOp{ AST.operator = o, AST.left_op_arg = l } =
   fromMaybe (getExprType ctx l) $ getOpType o
 getExprType ctx AST.UnaryOp{ AST.operator = o, AST.op_arg = a } =
   fromMaybe (getExprType ctx a) $ getOpType o
+getExprType ctx AST.Dot{ AST.dot_expr = expr, AST.dot_attribute = attr } =
+  getAttribute ctx (getExprType ctx expr) $ AST.ident_string attr
 getExprType _ AST.Int{} = Type . CType $ Signed Int
 getExprType _ AST.LongInt{} = Type . CType $ Signed Long
 getExprType _ AST.Float{} = Type . CType $ Signed Double
