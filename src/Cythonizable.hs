@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleInstances, DefaultSignatures, MultiParamTypeClasses #-}
+{-# LANGUAGE FlexibleInstances, MultiParamTypeClasses #-}
 
 module Cythonizable (
   Cythonizable(..),
@@ -19,7 +19,7 @@ class Cythonizable p c where
   cythonize :: p -> State Context c
 
 instance (Cythonizable p c) => Cythonizable [p] [c] where
-  cythonize l = mapM cythonize l
+  cythonize = mapM cythonize
 
 instance Cythonizable (AST.Module SrcSpan) (Module SrcSpan) where
   cythonize (AST.Module stmts) = do

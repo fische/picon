@@ -38,8 +38,12 @@ data Argument =
   deriving (Eq,Ord,Show)
 
 data Parameter =
-  Positional String |
-  NonPositional String
+  Positional {
+    name :: String
+  } |
+  NonPositional {
+    name :: String
+  }
   deriving (Eq,Ord,Show)
 
 -- TODO Return references
@@ -75,7 +79,7 @@ lastNode (Node(i, _)) = i
 
 append :: Path -> Path -> Path
 append Leaf p2 = p2
-append (Node (idx, p1)) p2 = Node (idx, (append p1 p2))
+append (Node (idx, p1)) p2 = Node (idx, append p1 p2)
 
 sub :: Path -> Path -> Path
 sub _ Leaf = error "p1 is not subpath of p2"
@@ -110,7 +114,7 @@ data Scope =
 -- Primary scope operations
 reverseIndex :: [a] -> Int -> Int
 reverseIndex l idx
-  | (length l) > idx = (length l) - idx - 1
+  | length l > idx = length l - idx - 1
   | otherwise = error "index is outside list range"
 
 add' :: String -> Path -> Scope -> Maybe [Scope] ->
@@ -142,7 +146,7 @@ get Leaf s = s
 get (Node((ident, idx), p)) s =
   let err = error "next path level not found"
       found = Map.lookup ident (scopes s)
-  in maybe err (\l -> get p $ l !! (reverseIndex l idx)) found
+  in maybe err (\l -> get p $ l !! reverseIndex l idx) found
 
 update :: (Scope -> Scope) -> Path -> Scope -> Scope
 update f Leaf s = f s
@@ -150,7 +154,7 @@ update f (Node ((ident, idx), p)) s =
   let err = error "next path level not found"
       updateScope l =
         let (hd, tl) = splitAt (reverseIndex l idx) l
-        in Just $ (hd ++ ((update f p (head tl)):(tail tl)))
+        in Just (hd ++ (update f p (head tl):tail tl))
   in s {
     scopes = Map.alter (maybe err updateScope) ident (scopes s)
   }
@@ -162,7 +166,7 @@ updateM f (Node ((ident, idx), p)) s = do
       updateScope l = do
         let (hd, tl) = splitAt (reverseIndex l idx) l
         v <- updateM f p $ head tl
-        return . Just $ (hd ++ v:(tail tl))
+        return . Just $ (hd ++ v:tail tl)
   newFunctions <- alterM (maybe err updateScope) ident (scopes s)
   return s {
     scopes = newFunctions
@@ -185,8 +189,8 @@ getVariableReference' i Leaf s =
 getVariableReference' i (Node((ident, idx), p)) s =
   let err = error "next path level not found"
       f l =
-        let func = l !! (reverseIndex l idx)
-            ref = maybe Nothing (\t -> Just $ VarRef{
+        let func = l !! reverseIndex l idx
+            ref = maybe Nothing (\t -> Just VarRef{
               identifier = i,
               types = [getReferenceType i t],
               refering = path s
@@ -204,14 +208,14 @@ checkReferencePath' _ Leaf _ = False
 checkReferencePath' i (Node((ident, idx), p)) s =
   let err = error "next path level not found"
       f l =
-        let func = l !! (reverseIndex l idx)
+        let func = l !! reverseIndex l idx
         in checkReferencePath' i p func
   in Map.member i (variables s) || maybe err f (Map.lookup ident (scopes s))
 
 checkReferencePath :: String -> Path -> Scope -> Maybe a
 checkReferencePath i (Node((ident, idx), p)) s =
   let err = error ("binding to variable " ++ i ++ " has been overriden")
-      f l = l !! (reverseIndex l idx)
+      f l = l !! reverseIndex l idx
       childScope = maybe err f (Map.lookup ident (scopes s))
   in bool Nothing err $ checkReferencePath' i p childScope
 checkReferencePath _ Leaf _ = Nothing
@@ -222,7 +226,7 @@ resolveType funcPath s t@VarRef{identifier = i, refering = refPath} =
       err = error ("variable " ++ i ++ " was not found")
       var = Map.findWithDefault err i (variables r)
   in t{
-    types = fromMaybe ((getReferenceType i var):(types t)) $
+    types = fromMaybe (getReferenceType i var:types t) $
               checkReferencePath i (sub refPath funcPath) r
   }
 resolveType p s (Either(t1, t2)) =
@@ -249,16 +253,16 @@ resolveReferences p s =
 -- Operations between scopes
 exitBlock' :: Scope -> Scope -> Scope
 exitBlock' curr block
-  | (path curr) == (path block) =
+  | path curr == path block =
     let mergeHead [] [] = []
-        mergeHead [] l2 = (Either (Type . CType $ Void, head l2)):l2
-        mergeHead l1 [] = (head l1):l1
+        mergeHead [] l2 = Either (Type . CType $ Void, head l2):l2
+        mergeHead l1 [] = head l1:l1
         mergeHead l1 l2
-          | (length l1) == (length l2) = l1
-          | otherwise = (Either (head l1, head l2)):l2
+          | length l1 == length l2 = l1
+          | otherwise = Either (head l1, head l2):l2
         addConditionalType k v =
           let found = Map.lookup k (variables curr)
-          in maybe (mergeHead [] v) (\l -> mergeHead l v) found
+          in maybe (mergeHead [] v) (`mergeHead` v) found
     in block {
       variables = Map.mapWithKey addConditionalType (variables block)
     }
@@ -314,7 +318,7 @@ assignVariable' k t s =
   }
 
 assignVariable :: String -> Type -> Path -> Scope -> Scope
-assignVariable k t p s = update (assignVariable' k t) p s
+assignVariable k t = update (assignVariable' k t)
 
 returnVariable' :: Type -> Scope -> Scope
 returnVariable' t s@Function{} =
@@ -335,8 +339,9 @@ addParameterType (Keyword ident) t s =
     }
 addParameterType (Position idx) t s =
   let l = parameterPosition s
-  in addParameterType (Keyword (l !! (reverseIndex l idx))) t s
+  in addParameterType (Keyword (l !! reverseIndex l idx)) t s
 
+-- TODO Handle call to class constructor
 call :: Type -> Map.Map Argument Type -> Scope -> Scope
 call FuncRef{ refering = p } args s =
   resolveReferences p $
@@ -346,43 +351,41 @@ call VarRef{ types = (hd:_) } args ctx = call hd args ctx
 call _ _ _ = error "cannot call non-callable objects"
 
 getReturnType' :: Type -> Type
-getReturnType' (VarRef { types = [] }) = Type $ CType Void
-getReturnType' (VarRef { types = (hd:_) }) = hd
+getReturnType' VarRef{ types = [] } = Type $ CType Void
+getReturnType' VarRef{ types = (hd:_) } = hd
 getReturnType' (Either(t1, t2)) = Either(getReturnType' t1, getReturnType' t2)
 getReturnType' t = t
 
+-- TODO Handle call to class constructor
 getReturnType :: Type -> Scope -> Type
-getReturnType (FuncRef{ refering = p }) s =
+getReturnType FuncRef{ refering = p } s =
   case get p s of
     f@Function{} -> maybe (Type . CType $ Void) getReturnType' $ returnType f
     Class{} -> ClassRef{ refering = p }
     _ -> error "cannot get return type of non callable objects"
-getReturnType (VarRef{ types = (hd:_) }) s = getReturnType hd s
+getReturnType VarRef{ types = (hd:_) } s = getReturnType hd s
 getReturnType t _ = t
 
 addParameter' :: Parameter -> Maybe Type -> Scope -> Scope
-addParameter' (Positional i) t s =
+addParameter' p t s =
   let f Nothing = Just $ maybeToList t
       f (Just _) = error "parameter has already been added"
-      params = Map.alter f i $ parameterType s
-      ref = ParamRef{identifier = i, refering = path s}
-  in s {
-    variables = Map.insert i [ref] $ variables s,
-    parameterPosition = i:(parameterPosition s),
-    parameterType = params
-  }
-addParameter' (NonPositional i) t s =
-  let f Nothing = Just $ maybeToList t
-      f (Just _) = error "parameter has already been added"
-      params = Map.alter f i $ parameterType s
-      ref = ParamRef{identifier = i, refering = path s}
-  in s {
-    variables = Map.insert i [ref] $ variables s,
-    parameterType = params
-  }
+      ident = name p
+      params = Map.alter f ident $ parameterType s
+      ref = ParamRef{identifier = ident, refering = path s}
+  in case p of
+      Positional{} -> s {
+        variables = Map.insert ident [ref] $ variables s,
+        parameterPosition = ident:parameterPosition s,
+        parameterType = params
+      }
+      NonPositional{} -> s {
+        variables = Map.insert ident [ref] $ variables s,
+        parameterType = params
+      }
 
 addParameter :: Parameter -> Maybe Type -> Path -> Scope -> Scope
-addParameter param t p s = update (addParameter' param t) p s
+addParameter param t = update (addParameter' param t)
 
 getParameters :: Path -> Scope -> Map.Map String [Type]
 getParameters p s = parameterType $ get p s
@@ -396,14 +399,14 @@ getCythonType' global (Either(t1, t2)) = do
   ct1 <- getCythonType' global t1
   ct2 <- getCythonType' global t2
   return . Just . mergeTypes $ catMaybes [ct1, ct2]
-getCythonType' global (VarRef{ types = t })  = do
+getCythonType' global VarRef{ types = t }  = do
   l <- mapM (getCythonType' global) t
   return . Just . mergeTypes $ catMaybes l
-getCythonType' global ref@(ParamRef{ identifier = i, refering = p }) = do
+getCythonType' global ref@ParamRef{ identifier = i, refering = p } = do
   set <- State.get
   if Set.member ref set
     then
-      return $ Nothing
+      return Nothing
     else do
       let s = get p global
           params = parameterType s
@@ -411,9 +414,9 @@ getCythonType' global ref@(ParamRef{ identifier = i, refering = p }) = do
       State.put $ Set.insert ref set
       l <- mapM (getCythonType' global) $ Map.findWithDefault err i params
       return . Just . mergeTypes $ catMaybes l
-getCythonType' _ (ClassRef{ refering = p }) =
+getCythonType' _ ClassRef{ refering = p } =
   return . Just . UserDefined . fst $ lastNode p
-getCythonType' _ (FuncRef{}) =
+getCythonType' _ FuncRef{} =
   error "function pointers are not yet supported"
 
 getCythonType :: Scope -> [Type] -> CythonType
@@ -422,7 +425,7 @@ getCythonType s t =
   in mergeTypes $ catMaybes l
 
 getFunctionReturnType :: Scope -> Scope -> CythonType
-getFunctionReturnType global (Function{returnType = r}) =
+getFunctionReturnType global Function{returnType = r} =
   maybe (CType Void) (\t -> getCythonType global [t]) r
 getFunctionReturnType _ _ =
   error "cannot get return type of something else than a function"

@@ -27,7 +27,7 @@ alterM' f k [] = do
 alterM' f k (hd@(k1, v1):tl)
   | k == k1 = do
     a <- f (Just v1)
-    return $ maybe tl (\v2 -> ((k1, v2):tl)) a
+    return $ maybe tl (\v2 -> (k1, v2):tl) a
   | otherwise = do
     newTail <- alterM' f k tl
     return (hd:newTail)
@@ -45,6 +45,4 @@ foldrWithKeyM' f acc ((k, v):tl) = do
   foldrWithKeyM' f result tl
 
 foldrWithKeyM :: (Monad m) => (k -> a -> b -> m b) -> b -> Map.Map k a -> m b
-foldrWithKeyM f acc m = do
-  result <- foldrWithKeyM' f acc $ Map.toList m
-  return result
+foldrWithKeyM f acc = foldrWithKeyM' f acc . Map.toList

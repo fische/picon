@@ -95,7 +95,7 @@ unstashFunction p ctx =
             functionsStash = stash
           }
       in newCtx {
-        position = (position ctx)
+        position = position ctx
       }) parse
 
 call :: Type -> Map.Map Argument Type -> Context -> Context
