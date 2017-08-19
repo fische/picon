@@ -106,6 +106,8 @@ call t@FuncRef{ refering = p } args ctx =
   }
 call VarRef{ types = (hd:_) } args ctx =
   Analyzable.Context.call hd args ctx
+-- TODO Call __init__
+call ClassTypeRef{} _ ctx = ctx
 call _ _ _ = error "cannot call non-callable objects"
 
 callAllStashed' :: [Path] -> Context -> Context

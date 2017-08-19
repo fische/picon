@@ -38,10 +38,13 @@ getCythonType' global ref@ParamRef{ identifier = i, refering = p } = do
       put $ Set.insert ref set
       l <- mapM (getCythonType' global) $ Map.findWithDefault err i params
       return . Just . mergeTypes $ catMaybes l
-getCythonType' _ ClassRef{} =
-  error "class types are not supported"
+getCythonType' _ ClassRef{ refering = p } =
+  let getClassName Leaf = error "this path does not have any node"
+      getClassName (Node((ident, _), Leaf)) = ident
+      getClassName (Node(_, n)) = getClassName n
+  in return . Just . UserDefined $ getClassName p
 getCythonType' _ ClassTypeRef{} =
-  error "pointers to class types are not supported"
+  error "class types are not supported"
 getCythonType' _ FuncRef{} =
   error "function pointers are not yet supported"
 

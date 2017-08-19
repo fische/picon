@@ -171,6 +171,7 @@ getReturnType :: Type -> Scope -> Type
 getReturnType FuncRef{ refering = p } s =
   maybe (Type . CType $ Void) getReturnType' . returnType $ get p s
 getReturnType VarRef{ types = (hd:_) } s = getReturnType hd s
+getReturnType ClassTypeRef{ refering = p } _ = ClassRef{ refering = p }
 getReturnType _ _ = error "cannot get return type of non callable objects"
 
 addParameter' :: Parameter -> Maybe Type -> Scope -> Scope
