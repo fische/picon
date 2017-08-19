@@ -1,6 +1,4 @@
 module Scope (
-  Argument(..),
-  Parameter(..),
   Type(..),
   Path(..),
   Scope(..),
@@ -22,20 +20,6 @@ import Monadic.Map
 import qualified Control.Monad.State as State
 
 import Language.Cython.Type
-
-data Argument =
-  Position Int |
-  Keyword String
-  deriving (Eq,Ord,Show)
-
-data Parameter =
-  Positional {
-    name :: String
-  } |
-  NonPositional {
-    name :: String
-  }
-  deriving (Eq,Ord,Show)
 
 -- TODO Return references
 data Type =

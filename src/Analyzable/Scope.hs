@@ -1,5 +1,7 @@
 module Analyzable.Scope (
   module Scope,
+  Argument(..),
+  Parameter(..),
   newModule,
   exitBlock,
   addFunction,
@@ -21,6 +23,16 @@ import Control.Applicative
 import Scope
 
 import Language.Cython.Type
+
+data Argument =
+  Position Int |
+  Keyword String
+  deriving (Eq,Ord,Show)
+
+data Parameter =
+  Positional String |
+  NonPositional String
+  deriving (Eq,Ord,Show)
 
 newModule :: Scope
 newModule = Module {
@@ -156,18 +168,17 @@ addParameter' :: Parameter -> Maybe Type -> Scope -> Scope
 addParameter' p t s =
   let f Nothing = Just $ maybeToList t
       f (Just _) = error "parameter has already been added"
-      ident = name p
-      params = Map.alter f ident $ parameterType s
-      ref = ParamRef{identifier = ident, refering = path s}
+      params ident = Map.alter f ident $ parameterType s
+      ref ident = ParamRef{identifier = ident, refering = path s}
   in case p of
-      Positional{} -> s {
-        variables = Map.insert ident [ref] $ variables s,
+      (Positional ident) -> s {
+        variables = Map.insert ident [ref ident] $ variables s,
         parameterPosition = ident:parameterPosition s,
-        parameterType = params
+        parameterType = params ident
       }
-      NonPositional{} -> s {
-        variables = Map.insert ident [ref] $ variables s,
-        parameterType = params
+      (NonPositional ident) -> s {
+        variables = Map.insert ident [ref ident] $ variables s,
+        parameterType = params ident
       }
 
 addParameter :: Parameter -> Maybe Type -> Path -> Scope -> Scope
