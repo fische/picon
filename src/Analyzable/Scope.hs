@@ -179,25 +179,31 @@ getReturnType VarRef{ types = (hd:_) } s = getReturnType hd s
 getReturnType ClassTypeRef{ refering = p } _ = ClassRef{ refering = p }
 getReturnType _ _ = error "cannot get return type of non callable objects"
 
-addParameter' :: Parameter -> Maybe Type -> Scope -> Scope
-addParameter' p t s =
-  let f Nothing = Just t
-      f (Just _) = error "parameter has already been added"
-      params ident = Map.alter f ident $ parameterType s
-      ref ident = ParamRef{identifier = ident, refering = path s}
-  in case p of
-      (Positional ident) -> s {
-        variables = Map.insert ident [ref ident] $ variables s,
-        parameterPosition = ident:parameterPosition s,
-        parameterType = params ident
-      }
-      (NonPositional ident) -> s {
-        variables = Map.insert ident [ref ident] $ variables s,
-        parameterType = params ident
-      }
+addParameter' :: Parameter -> Maybe Type -> Path -> Scope -> Scope
+addParameter' param t funcPath upper =
+  update (\func ->
+    let addType Nothing = Just t
+        addType (Just _) = error "parameter has already been added"
+        updateParams ident = Map.alter addType ident $ parameterType func
+        ref ident =
+          case upper of
+            Class{path = p} -> [ClassRef{refering = p}]
+            _ -> [ParamRef{identifier = ident, refering = path func}]
+    in case param of
+        (Positional ident) -> func {
+          variables = Map.insert ident (ref ident) $ variables func,
+          parameterPosition = ident:parameterPosition func,
+          parameterType = updateParams ident
+        }
+        (NonPositional ident) -> func {
+          variables = Map.insert ident (ref ident) $ variables func,
+          parameterType = updateParams ident
+        }) funcPath upper
 
 addParameter :: Parameter -> Maybe Type -> Path -> Scope -> Scope
-addParameter param t = update (addParameter' param t)
+addParameter param t p =
+  let (upper, func) = split p
+  in update (addParameter' param t func) upper
 
 getAttribute :: Scope -> Type -> String -> Type
 getAttribute _ VarRef{ identifier = i, types = [] } _ =

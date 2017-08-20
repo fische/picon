@@ -1,6 +1,7 @@
 module Scope (
   Type(..),
   Path(..),
+  split,
   Scope(..),
   add,
   get,
@@ -61,6 +62,13 @@ sub Leaf p = p
 sub (Node(idx1, p1)) (Node(idx2, p2))
   | idx1 == idx2 = sub p1 p2
   | otherwise = error "p1 is not subpath of p2"
+
+split :: Path -> (Path, Path)
+split Leaf = error "this path can not be split"
+split end@(Node(_, Leaf)) = (Leaf, end)
+split (Node(ident, next)) =
+  let (p, end) = split next
+  in (Node(ident, p), end)
 
 data Scope =
   Module {

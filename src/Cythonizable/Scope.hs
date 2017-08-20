@@ -29,7 +29,6 @@ getCythonType' global (Either(t1, t2)) = do
     (Just $ mergeTypes l)
     Nothing
     (null l)
-
 getCythonType' global VarRef{ types = t }  = do
   ct <- mapM (getCythonType' global) t
   let l = catMaybes ct
