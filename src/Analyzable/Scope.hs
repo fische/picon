@@ -87,7 +87,7 @@ addClass i p s =
   in (assignVariable i ref p fScope, fPath)
 
 getReferenceFlag :: Scope -> Bool
-getReferenceFlag Module{} = False
+getReferenceFlag Module{} = True
 getReferenceFlag Class{} = False
 getReferenceFlag Function{} = True
 
@@ -96,6 +96,10 @@ getVariableReference' i Leaf s =
   let getHead [] = error ("variable " ++ i ++ " referenced before assignement")
       getHead (hd:_) = Right hd
   in maybe (Left $ getReferenceFlag s) getHead $ Map.lookup i (variables s)
+getVariableReference' i (Node((ident, idx), p)) s@Class{} =
+  let err = error "next path level not found"
+      f l = getVariableReference' i p (l !! reverseIndex l idx)
+  in maybe err f $ Map.lookup ident (scopes s)
 getVariableReference' i (Node((ident, idx), p)) s =
   let err = error "next path level not found"
       f l =
