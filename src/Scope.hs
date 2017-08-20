@@ -22,6 +22,8 @@ import qualified Control.Monad.State as State
 
 import Language.Cython.Type
 
+-- TODO Handle builtins (print, etc)
+-- TODO Handle special class methods
 -- TODO Return references
 -- TODO Hold members updates within class reference?
 data Type =
