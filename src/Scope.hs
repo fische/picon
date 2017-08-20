@@ -79,7 +79,7 @@ data Scope =
     variables :: Map.Map String [Type],
     returnType :: Maybe Type,
     parameterPosition :: [String],
-    parameterType :: Map.Map String [Type]
+    parameterType :: Map.Map String (Maybe Type)
   }
   deriving (Eq,Ord,Show)
 

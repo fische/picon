@@ -12,12 +12,10 @@ module Analyzable.Scope (
   call,
   getReturnType,
   addParameter,
-  getParameters,
   getAttribute
 ) where
 
 import qualified Data.Map.Strict as Map
-import Data.Maybe
 
 import Scope
 
@@ -145,9 +143,11 @@ returnVariable t = update (returnVariable' t)
 addParameterType :: Argument -> Type -> Scope -> Scope
 addParameterType (Keyword ident) t s =
   let err = error ("cannot find variable " ++ ident)
+      addType Nothing = Just t
+      addType (Just o) = Just (Either(o, t))
   in s {
       parameterType =
-        Map.alter (maybe err (\l -> Just (t:l))) ident (parameterType s)
+        Map.alter (maybe err (Just . addType)) ident (parameterType s)
     }
 addParameterType (Position idx) t s =
   let l = parameterPosition s
@@ -177,7 +177,7 @@ getReturnType _ _ = error "cannot get return type of non callable objects"
 
 addParameter' :: Parameter -> Maybe Type -> Scope -> Scope
 addParameter' p t s =
-  let f Nothing = Just $ maybeToList t
+  let f Nothing = Just t
       f (Just _) = error "parameter has already been added"
       params ident = Map.alter f ident $ parameterType s
       ref ident = ParamRef{identifier = ident, refering = path s}
@@ -194,9 +194,6 @@ addParameter' p t s =
 
 addParameter :: Parameter -> Maybe Type -> Path -> Scope -> Scope
 addParameter param t = update (addParameter' param t)
-
-getParameters :: Path -> Scope -> Map.Map String [Type]
-getParameters p s = parameterType $ get p s
 
 getAttribute :: Scope -> Type -> String -> Type
 getAttribute _ VarRef{ identifier = i, types = [] } _ =

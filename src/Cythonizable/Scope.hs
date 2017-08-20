@@ -9,9 +9,11 @@ module Cythonizable.Scope (
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Maybe
+import Data.Bool
 import Monadic.Map
 
 import Control.Monad.State as State
+import Control.Applicative
 
 import Scope
 
@@ -22,22 +24,34 @@ getCythonType' _ (Type t) = return (Just t)
 getCythonType' global (Either(t1, t2)) = do
   ct1 <- getCythonType' global t1
   ct2 <- getCythonType' global t2
-  return . Just . mergeTypes $ catMaybes [ct1, ct2]
+  let l = catMaybes [ct1, ct2]
+  return $ bool
+    (Just $ mergeTypes l)
+    Nothing
+    (null l)
+
 getCythonType' global VarRef{ types = t }  = do
-  l <- mapM (getCythonType' global) t
-  return . Just . mergeTypes $ catMaybes l
+  ct <- mapM (getCythonType' global) t
+  let l = catMaybes ct
+  return $ bool
+    (Just $ mergeTypes l)
+    Nothing
+    (null l)
 getCythonType' global ref@ParamRef{ identifier = i, refering = p } = do
   set <- State.get
   if Set.member ref set
     then
       return Nothing
     else do
-      let s = Scope.get p global
-          params = parameterType s
-          err = error ("can not find parameter " ++ i)
       put $ Set.insert ref set
-      l <- mapM (getCythonType' global) $ Map.findWithDefault err i params
-      return . Just . mergeTypes $ catMaybes l
+      let s = Scope.get p global
+          err = error ("can not find parameter " ++ i)
+      maybe
+        (return $ Just PythonObject)
+        (\t -> do
+          ct <- getCythonType' global t
+          return $ ct <|> Just PythonObject)
+        (Map.findWithDefault err i $ parameterType s)
 getCythonType' _ ClassRef{ refering = p } =
   let getClassName Leaf = error "this path does not have any node"
       getClassName (Node((ident, _), Leaf)) = ident
