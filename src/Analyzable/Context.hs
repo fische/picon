@@ -17,11 +17,13 @@ module Analyzable.Context (
   Analyzable.Context.enablePositionalParametersFlag,
   Analyzable.Context.disablePositionalParametersFlag,
   Analyzable.Context.unstashAll,
-  Analyzable.Context.getAttribute
+  Analyzable.Context.getAttribute,
+  Scope.getReferencePath
 ) where
 
 import qualified Data.Map.Strict as Map
 import Data.Bool
+import Data.Maybe
 
 import Analyzable.Scope as Scope
 
@@ -45,10 +47,12 @@ getVariableReference :: String -> Context -> Type
 getVariableReference ident ctx =
   Scope.getVariableReference ident (position ctx) (scope ctx)
 
-assignVariable :: String -> Type -> Context -> Context
-assignVariable ident typ ctx = ctx {
-  scope = Scope.assignVariable ident typ (position ctx) (scope ctx)
-}
+assignVariable :: Maybe Path -> String -> Type -> Context -> Context
+assignVariable p ident typ ctx =
+  let pos = fromMaybe (position ctx) p
+  in ctx {
+    scope = Scope.assignVariable ident typ pos (scope ctx)
+  }
 
 returnVariable :: Type -> Context -> Context
 returnVariable typ ctx = ctx {

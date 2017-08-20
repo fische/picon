@@ -12,7 +12,8 @@ module Analyzable.Scope (
   call,
   getReturnType,
   addParameter,
-  getAttribute
+  getAttribute,
+  getReferencePath
 ) where
 
 import qualified Data.Map.Strict as Map
@@ -223,3 +224,8 @@ getAttribute s ClassRef{ refering = p } attr =
   in maybe err getType . Map.lookup attr . variables $ get p s
 getAttribute _ _ _ =
   error "this expression has no attribute"
+
+-- TODO Handle VarRef, ParamRef
+getReferencePath :: Type -> Path
+getReferencePath ClassRef{ refering = p } = p
+getReferencePath _ = error "type does not hold any reference path"

@@ -52,6 +52,14 @@ getExprType _ AST.Strings{} = Type String
 getExprType _ AST.UnicodeStrings{} = Type Unicode
 getExprType _ _ = Type PythonObject
 
+getExprReferencePath :: Context -> AST.Expr a -> (Maybe Path, String)
+getExprReferencePath _ AST.Var{AST.var_ident = i} =
+  (Nothing, AST.ident_string i)
+getExprReferencePath ctx AST.Dot{ AST.dot_expr = expr, AST.dot_attribute = attr } =
+  (Just . getReferencePath $ getExprType ctx expr, AST.ident_string attr)
+getExprReferencePath _ _ =
+  error "this expression does not have any reference path"
+
 getKeywordArgumentType :: Context -> [AST.Argument a] ->
   Map.Map Argument Type -> Map.Map Argument Type
 getKeywordArgumentType _ [] args = args
@@ -143,10 +151,10 @@ instance Analyzable (AST.Statement SrcSpan) where
   analyze (AST.Conditional guards e _) ctx =
     let guardsCtx = analyze guards ctx
     in exitBlock guardsCtx $ analyze e guardsCtx
-  analyze (AST.Assign [to@AST.Var{}] expr _) ctx =
-    let ident = AST.ident_string $ AST.var_ident to
-        exprCtx = analyze expr ctx
-    in assignVariable ident (getExprType exprCtx expr) exprCtx
+  analyze (AST.Assign [to] expr _) ctx =
+    let exprCtx = analyze expr ctx
+        (pos, ident) = getExprReferencePath exprCtx to
+    in assignVariable pos ident (getExprType exprCtx expr) exprCtx
   -- TODO Handle when assigning multiple wariables at the same time
   analyze (AST.Assign tos expr _) ctx = analyze expr $ analyze tos ctx
   analyze (AST.AugmentedAssign to op expr _) ctx =
