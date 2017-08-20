@@ -18,25 +18,31 @@ instance Pretty Type where
   pretty (Type t) = pretty t
   pretty (Either (t1, t2)) =
     text "(" <> pretty t1 <+> text "|" <+> pretty t2 <> text ")"
-  pretty VarRef{ types = t } = pretty t
+  pretty VarRef{ identifier = i, types = t } = text "ref(" <> text i <> text ")<" <> pretty t <> text ">"
+  pretty ParamRef{ identifier = i } = text "param_ptr(" <> text i <> text ")"
   pretty FuncRef{} = text "fun_ptr"
+  pretty ClassRef{} = text "class_ptr"
+  pretty ClassTypeRef{} = text "class_def"
 
 instance Pretty [Type] where
   pretty [] = pretty Void
   pretty l = foldr (\t d -> d <+> pretty t) empty l
 
 instance Pretty (Map.Map String [Type]) where
-  pretty m = Map.foldrWithKey
-    (\k v d -> d $+$ text "<" <+> pretty v <+> text ">" <+> pretty k) empty m
+  pretty = Map.foldrWithKey
+    (\k v d -> d $+$ text "<" <+> pretty v <+> text ">" <+> pretty k) empty
 
 instance Pretty [Scope] where
-  pretty l = foldr (\s d -> d $+$ pretty s) empty l
+  pretty = foldr (\s d -> d $+$ pretty s) empty
 
 instance Pretty (Map.Map String [Scope]) where
-  pretty m = Map.foldr (\l d -> d $+$ pretty l) empty m
+  pretty = Map.foldr (\l d -> d $+$ pretty l) empty
 
 instance Pretty Scope where
-  pretty (Module{ variables = v, functions = f }) = pretty v $+$ pretty f
-  pretty (Function{ returnType = r, path = p, variables = v, functions = f }) =
+  pretty Class{ path = p, variables = v, scopes = s } =
+    pretty p <> text ":" $+$
+    nest 4 (pretty v $+$ pretty s)
+  pretty Module{ variables = v, scopes = s } = pretty v $+$ pretty s
+  pretty Function{ returnType = r, path = p, variables = v, scopes = s } =
     text "<" <+> pretty r <+> text ">" <+> pretty p <> text ":" $+$
-    nest 4 (pretty v $+$ pretty f)
+    nest 4 (pretty v $+$ pretty s)

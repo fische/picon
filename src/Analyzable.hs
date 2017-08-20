@@ -33,7 +33,7 @@ getOpType AST.NotIn{} = Just . Type $ CType BInt
 getOpType _ = Nothing
 
 getExprType :: Context -> AST.Expr a -> Type
-getExprType ctx AST.Var{AST.var_ident = ident} =
+getExprType ctx AST.Var{ AST.var_ident = ident } =
   getVariableReference (AST.ident_string ident) ctx
 getExprType ctx AST.Call{ AST.call_fun = f } =
   getReturnType (getExprType ctx f) ctx
@@ -41,6 +41,8 @@ getExprType ctx AST.BinaryOp{ AST.operator = o, AST.left_op_arg = l } =
   fromMaybe (getExprType ctx l) $ getOpType o
 getExprType ctx AST.UnaryOp{ AST.operator = o, AST.op_arg = a } =
   fromMaybe (getExprType ctx a) $ getOpType o
+getExprType ctx AST.Dot{ AST.dot_expr = expr, AST.dot_attribute = attr } =
+  getAttribute ctx (getExprType ctx expr) $ AST.ident_string attr
 getExprType _ AST.Int{} = Type . CType $ Signed Int
 getExprType _ AST.LongInt{} = Type . CType $ Signed Long
 getExprType _ AST.Float{} = Type . CType $ Signed Double
@@ -49,6 +51,14 @@ getExprType _ AST.ByteStrings{} = Type Bytes
 getExprType _ AST.Strings{} = Type String
 getExprType _ AST.UnicodeStrings{} = Type Unicode
 getExprType _ _ = Type PythonObject
+
+getExprReferencePath :: Context -> AST.Expr a -> (Maybe Path, String)
+getExprReferencePath _ AST.Var{AST.var_ident = i} =
+  (Nothing, AST.ident_string i)
+getExprReferencePath ctx AST.Dot{ AST.dot_expr = expr, AST.dot_attribute = attr } =
+  (Just . getReferencePath $ getExprType ctx expr, AST.ident_string attr)
+getExprReferencePath _ _ =
+  error "this expression does not have any reference path"
 
 getKeywordArgumentType :: Context -> [AST.Argument a] ->
   Map.Map Argument Type -> Map.Map Argument Type
@@ -101,7 +111,7 @@ instance Analyzable (AST.Op SrcSpan)
 instance Analyzable (AST.AssignOp SrcSpan)
 
 instance Analyzable (AST.Module SrcSpan) where
-  analyze (AST.Module stmts) ctx = analyze stmts ctx
+  analyze (AST.Module stmts) = analyze stmts
 
 instance Analyzable (AST.ImportItem SrcSpan) where
   analyze (AST.ImportItem item as _) ctx = analyze as $ analyze item ctx
@@ -114,7 +124,7 @@ instance Analyzable (AST.FromItems SrcSpan) where
   analyze (AST.FromItems items _) ctx = analyze items ctx
 
 instance Analyzable (AST.ImportRelative SrcSpan) where
-  analyze (AST.ImportRelative _ m _) ctx = analyze m ctx
+  analyze (AST.ImportRelative _ m _) = analyze m
 
 instance {-# OVERLAPPING #-} Analyzable
   [(AST.Expr SrcSpan, AST.Suite SrcSpan)] where
@@ -135,14 +145,16 @@ instance Analyzable (AST.Statement SrcSpan) where
   analyze (AST.Fun name args _ body _) ctx =
     let parse = analyze body . analyze args . enablePositionalParametersFlag
     in stashFunction (AST.ident_string name) parse ctx
-  analyze (AST.Class _ args body _) ctx = analyze body $ analyze args ctx
+  -- TODO Handle inheritance
+  analyze (AST.Class name _ body _) ctx =
+    exitClass ctx . analyze body $ enterClass (AST.ident_string name) ctx
   analyze (AST.Conditional guards e _) ctx =
     let guardsCtx = analyze guards ctx
     in exitBlock guardsCtx $ analyze e guardsCtx
-  analyze (AST.Assign [to@AST.Var{}] expr _) ctx =
-    let ident = AST.ident_string $ AST.var_ident to
-        exprCtx = analyze expr ctx
-    in assignVariable ident (getExprType exprCtx expr) exprCtx
+  analyze (AST.Assign [to] expr _) ctx =
+    let exprCtx = analyze expr ctx
+        (pos, ident) = getExprReferencePath exprCtx to
+    in assignVariable pos ident (getExprType exprCtx expr) exprCtx
   -- TODO Handle when assigning multiple wariables at the same time
   analyze (AST.Assign tos expr _) ctx = analyze expr $ analyze tos ctx
   analyze (AST.AugmentedAssign to op expr _) ctx =
@@ -173,18 +185,18 @@ instance Analyzable (AST.RaiseExpr SrcSpan) where
   analyze (AST.RaiseV2 expr) ctx = analyze expr ctx
 
 instance Analyzable (AST.Decorator SrcSpan) where
-  analyze (AST.Decorator _ args _) ctx = analyze args ctx
+  analyze (AST.Decorator _ args _) = analyze args
 
 instance Analyzable (AST.Parameter SrcSpan) where
   analyze (AST.Param ident _ dflt _) ctx =
     let dfltCtx = analyze dflt ctx
         dfltType = fmap (getExprType dfltCtx) dflt
     in addParameter (AST.ident_string ident) dfltType dfltCtx
-  analyze (AST.EndPositional{}) ctx = disablePositionalParametersFlag ctx
-  analyze (AST.UnPackTuple{}) _ = error "tuples are not yet supported"
-  analyze (AST.VarArgsPos{}) _ =
+  analyze AST.EndPositional{} ctx = disablePositionalParametersFlag ctx
+  analyze AST.UnPackTuple{} _ = error "tuples are not yet supported"
+  analyze AST.VarArgsPos{} _ =
     error "excess positional parameter is not yet supported"
-  analyze (AST.VarArgsKeyword{}) _ =
+  analyze AST.VarArgsKeyword{} _ =
     error "excess keyword parameter is not yet supported"
 
 instance Analyzable (AST.Argument SrcSpan) where
@@ -199,7 +211,7 @@ instance Analyzable (AST.Handler SrcSpan) where
   analyze (AST.Handler clause suite _) ctx = analyze suite $ analyze clause ctx
 
 instance Analyzable (AST.ExceptClause SrcSpan) where
-  analyze (AST.ExceptClause expr _) ctx = analyze expr ctx
+  analyze (AST.ExceptClause expr _) = analyze expr
 
 instance Analyzable (AST.Comprehension SrcSpan) where
   analyze (AST.Comprehension expr for _) ctx = analyze for $ analyze expr ctx

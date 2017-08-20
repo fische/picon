@@ -7,7 +7,7 @@ import qualified Data.Map.Strict as Map
 import qualified Language.Python.Common.AST as AST
 import Language.Python.Common.Pretty
 import Language.Python.Common.PrettyAST ()
-import Language.Cython.PrettyType (prettyType)
+import Language.Cython.PrettyType ()
 import Language.Cython.AST
 
 indent :: Doc -> Doc
@@ -46,7 +46,7 @@ instance Pretty (Statement annot) where
     perhaps (fun_result_annotation stmt) (text "->") <+>
     pretty (fun_result_annotation stmt) <> colon $+$ indent (prettySuite (fun_body stmt))
   pretty stmt@(Class {}) =
-    text "class" <+> pretty (class_name stmt) <> prettyOptionalList (class_args stmt) <>
+    text "cdef class" <+> pretty (class_name stmt) <> prettyOptionalList (class_args stmt) <>
     colon $+$ indent (prettySuite (class_body stmt))
   pretty (Conditional { cond_guards = guards, cond_else = optionalElse }) =
     case guards of
@@ -68,8 +68,6 @@ instance Pretty (Statement annot) where
     commaList p <+> equals <+> pretty e
   pretty (CDefSuite vars _) = text "cdef:" $+$ indent (Map.foldrWithKey
     (\k v d -> d $+$ pretty v <+> pretty k) empty vars)
-  pretty (CTypeDef { typedef_ident = i, typedef_type = t }) =
-    text "ctypedef" <+> prettyType t (pretty i)
   pretty (Statement s) = pretty s
 
 prettyWithContext :: (AST.Expr annot, Maybe (AST.Expr annot)) -> Doc
@@ -85,7 +83,7 @@ instance Pretty (Handler annot) where
 
 instance Pretty (Parameter annot) where
   pretty (Param { param_type = typ, param_name = ident, param_py_annotation = annot, param_default = def }) =
-    pretty typ <+> pretty ident <> (maybe empty (\e -> colon <> pretty e <> space) annot) <> 
+    pretty typ <+> pretty ident <> (maybe empty (\e -> colon <> pretty e <> space) annot) <>
     maybe empty (\e -> equals <> pretty e) def
   pretty (Parameter p) = pretty p
 

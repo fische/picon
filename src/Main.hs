@@ -21,7 +21,7 @@ main = do
   case Python3.parseModule code file of
       Left err -> putStrLn $ prettyText err
       Right (pymodule, _) ->
-        let analysis = callAllStashed $ analyze pymodule newContext
+        let analysis = unstashAll $ analyze pymodule newContext
             cython =
               cythonize pymodule :: State Cythonizable.Context (Module SrcSpan)
         in putStrLn . prettyText . evalState cython $ fromAnalysis analysis
