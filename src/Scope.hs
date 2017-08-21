@@ -157,7 +157,7 @@ updateM f (Node ((ident, idx), p)) s = do
   }
 
 merge :: (Scope -> Scope -> Scope) -> Path -> Scope -> Scope -> Scope
-merge f p s1 s2 = update (\v1 -> f v1 $ get p s2) p s1
+merge f p s1 = update (f (get p s1)) p
 
 getReferenceType :: String -> [Type] -> Type
 getReferenceType i [] =
