@@ -1,11 +1,12 @@
-{-# LANGUAGE DeriveDataTypeable #-}
-
 module Options (
   Options(..)
 ) where
 
-import Data.Data
+import Language.Python.Common.ParseError
+import Language.Python.Common.AST
 
 data Options =
-  Options {}
-  deriving (Eq,Ord,Show,Typeable,Data)
+  Options {
+    targetDir :: Maybe FilePath,
+    parser :: String -> IO (Either ParseError ModuleSpan)
+  }
