@@ -43,6 +43,7 @@ getExprType ctx AST.UnaryOp{ AST.operator = o, AST.op_arg = a } =
   fromMaybe (getExprType ctx a) $ getOpType o
 getExprType ctx AST.Dot{ AST.dot_expr = expr, AST.dot_attribute = attr } =
   getAttribute ctx (getExprType ctx expr) $ AST.ident_string attr
+getExprType ctx AST.Paren{ AST.paren_expr = e } = getExprType ctx e
 getExprType _ AST.Int{} = Type . CType $ Signed Int
 getExprType _ AST.LongInt{} = Type . CType $ Signed Long
 getExprType _ AST.Float{} = Type . CType $ Signed Double
@@ -125,13 +126,6 @@ instance Analyzable (AST.FromItems SrcSpan) where
 
 instance Analyzable (AST.ImportRelative SrcSpan) where
   analyze (AST.ImportRelative _ m _) = analyze m
-
-instance {-# OVERLAPPING #-} Analyzable
-  [(AST.Expr SrcSpan, AST.Suite SrcSpan)] where
-  analyze [] ctx = ctx
-  analyze ((cond, body):tl) ctx =
-    let bodyCtx = exitBlock ctx . analyze body $ analyze cond ctx
-    in exitBlock bodyCtx $ analyze tl bodyCtx
 
 instance Analyzable (AST.Statement SrcSpan) where
   analyze (AST.Import items _) ctx = analyze items ctx
