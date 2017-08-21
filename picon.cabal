@@ -4,21 +4,28 @@
 name:                picon
 version:             0.1.0.0
 synopsis:            A Python-to-Cython tool
--- description:
+description:         picon aims to produce cython code as close as possible to
+                     the original python code. It supports versions 2.x and 3.x
+                     of Python.
 license:             BSD3
 license-file:        LICENSE
 author:              Maxime Fischer
 maintainer:          maxime2fischer@gmail.com
--- copyright:
 category:            Language
 build-type:          Simple
-extra-source-files:  ChangeLog.md
+stability:           experimental
+homepage:            https://github.com/fische/picon
+bug-reports:         https://github.com/fische/picon/issues
+extra-source-files:  CHANGELOG.md
+                     README.md
 cabal-version:       >=1.10
+
+source-repository head
+  type:     git
+  location: https://github.com/fische/picon.git
 
 executable picon
   main-is:             Main.hs
-  -- other-modules:
-  -- other-extensions:
   build-depends:
     base >=4.9 && <4.10,
     containers >= 0.5.7.1,
