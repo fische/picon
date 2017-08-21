@@ -71,5 +71,5 @@ they won't be supported in the future.
 - C type semantic (overflows, etc).
 - Variables holding multiple types.
 - Function pointers.
-- Special methods such as __init__, __str__, __radd__, etc.
+- Special methods such as \_\_init\_\_, \_\_str\_\_, \_\_radd\_\_, etc.
 - Nested functions.
