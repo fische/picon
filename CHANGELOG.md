@@ -1,5 +1,9 @@
 # Revision history for picon
 
+## 0.1.0.2 -- 22-08-2017
+
+* Add exceptions to the limitations in README.
+
 ## 0.1.0.1 -- 21-08-2017
 
 * Escape special methods underscores in README.
