@@ -73,3 +73,4 @@ they won't be supported in the future.
 - Function pointers.
 - Special methods such as \_\_init\_\_, \_\_str\_\_, \_\_radd\_\_, etc.
 - Nested functions.
+- Exceptions.
