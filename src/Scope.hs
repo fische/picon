@@ -26,6 +26,7 @@ import Language.Cython.Type
 -- TODO Handle special class methods
 -- TODO Return references
 -- TODO Hold members updates within class reference?
+-- | Type represents a cython variable type.
 data Type =
   Either (Type, Type) |
   Type CythonType |
@@ -41,14 +42,17 @@ data Type =
   FuncRef {
     refering :: Path
   } |
+  -- | ClassTypeRef represents a reference to a class definition.
   ClassTypeRef {
     refering :: Path
   } |
+  -- | ClassRef represents a reference to a class instance.
   ClassRef {
     refering :: Path
   }
   deriving (Eq,Ord,Show)
 
+-- | Path represents the path in the scope tree.
 data Path =
   Node ((String, Int), Path) |
   Leaf
@@ -65,6 +69,7 @@ sub (Node(idx1, p1)) (Node(idx2, p2))
   | idx1 == idx2 = sub p1 p2
   | otherwise = error "p1 is not subpath of p2"
 
+-- | split splits the last `node` from the path.
 split :: Path -> (Path, Path)
 split Leaf = error "this path can not be split"
 split end@(Node(_, Leaf)) = (Leaf, end)
@@ -72,6 +77,7 @@ split (Node(ident, next)) =
   let (p, end) = split next
   in (Node(ident, p), end)
 
+-- | Scope represents a python program through a scope tree.
 data Scope =
   Module {
     path :: Path,
@@ -93,9 +99,7 @@ data Scope =
   }
   deriving (Eq,Ord,Show)
 
-
-
--- Primary scope operations
+-- | reverseIndex returns correct index given the given list is reversed.
 reverseIndex :: [a] -> Int -> Int
 reverseIndex l idx
   | length l > idx = length l - idx - 1
@@ -116,6 +120,8 @@ add' i p s (Just l) = do
     path = newPath
   }:l)
 
+-- | add adds given scope with the given identifier to the node.
+-- It returns the new scope and the path of the scope that has been added.
 add :: String -> Scope -> Path -> Scope -> (Scope, Path)
 add ident body p s =
   let addToScope v = do
@@ -125,6 +131,7 @@ add ident body p s =
         }
   in State.runState (updateM addToScope p s) Leaf
 
+-- | get retrieves scope node at given path in given scope tree.
 get :: Path -> Scope -> Scope
 get Leaf s = s
 get (Node((ident, idx), p)) s =
@@ -132,6 +139,7 @@ get (Node((ident, idx), p)) s =
       found = Map.lookup ident (scopes s)
   in maybe err (\l -> get p $ l !! reverseIndex l idx) found
 
+-- | update updates node at given path with the given function.
 update :: (Scope -> Scope) -> Path -> Scope -> Scope
 update f Leaf s = f s
 update f (Node ((ident, idx), p)) s =
@@ -143,6 +151,7 @@ update f (Node ((ident, idx), p)) s =
     scopes = Map.alter (maybe err updateScope) ident (scopes s)
   }
 
+-- | updateM is the monadic version of `update`.
 updateM :: (Monad m) => (Scope -> m Scope) -> Path -> Scope -> m Scope
 updateM f Leaf s = f s
 updateM f (Node ((ident, idx), p)) s = do
@@ -156,9 +165,12 @@ updateM f (Node ((ident, idx), p)) s = do
     scopes = newFunctions
   }
 
+-- | merge merges node at given path in both given scope with the given
+-- function.
 merge :: (Scope -> Scope -> Scope) -> Path -> Scope -> Scope -> Scope
 merge f p s1 = update (f (get p s1)) p
 
+-- | getReferenceType returns last assigned type in the given list of types.
 getReferenceType :: String -> [Type] -> Type
 getReferenceType i [] =
   error ("variable " ++ i ++ " referenced before assignement")
@@ -206,6 +218,7 @@ resolveReferences' resolve s =
     variables = Map.map (map resolve) $ variables s
   }
 
+-- | resolveReferences resolves variable references at given path.
 resolveReferences :: Path -> Scope -> Scope
 resolveReferences p s =
   update (resolveReferences' (resolveType p s)) p s
