@@ -1,5 +1,9 @@
 # Revision history for picon
 
+## 0.1.0.3 -- 23-08-2017
+
+* Add some documentation to the code.
+
 ## 0.1.0.2 -- 22-08-2017
 
 * Add exceptions to the limitations in README.

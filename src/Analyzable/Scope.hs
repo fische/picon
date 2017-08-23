@@ -22,16 +22,19 @@ import Scope
 
 import Language.Cython.Type
 
+-- | Argument represents function call arguments.
 data Argument =
   Position Int |
   Keyword String
   deriving (Eq,Ord,Show)
 
+-- | Parameter represents function definition parameters.
 data Parameter =
   Positional String |
   NonPositional String
   deriving (Eq,Ord,Show)
 
+-- newModule creates an empty Module scope.
 newModule :: Scope
 newModule = Module {
   path = Leaf,
@@ -57,9 +60,15 @@ exitBlock' curr block
   | otherwise =
     error "blocks's scope should use the same type than their outer scope"
 
+-- | exitBlock merges block scope with current scope. If a variable from
+-- current scope has been modified in block scope, an `Either` type is appended
+-- to the variable's types with these two possible types.
 exitBlock :: Path -> Scope -> Scope -> Scope
 exitBlock = merge exitBlock'
 
+-- | addFunction adds an empty function scope at the given path and assigns a
+-- `FuncRef` to the variable with the given identifier at the same path. It
+-- returns the new scope and the new function scope path.
 addFunction :: String -> Path -> Scope -> (Scope, Path)
 addFunction i p s =
   let (fScope, fPath) = add i Function{
@@ -75,6 +84,9 @@ addFunction i p s =
       }
   in (assignVariable i ref p fScope, fPath)
 
+-- | addClass adds an empty class scope at the given path and assigns a
+-- `ClassTypeRef` to the variable with the given identifier at the same path.
+-- It returns the new scope and the new class scope path.
 addClass :: String -> Path -> Scope -> (Scope, Path)
 addClass i p s =
   let (fScope, fPath) = add i Class{
@@ -119,6 +131,7 @@ getVariableReference' i (Node((ident, idx), p)) s =
         in either getRef Right result
   in maybe err f $ Map.lookup ident (scopes s)
 
+-- | getVariableReference retrieves reference or type of variable.
 getVariableReference :: String -> Path -> Scope -> Type
 getVariableReference i p s =
   let err = error ("variable " ++ i ++ " was not found")
@@ -132,6 +145,7 @@ assignVariable' k t s =
     variables = Map.alter appendVarType k (variables s)
   }
 
+-- | assignVariable appends the given type to the variable at the given path.
 assignVariable :: String -> Type -> Path -> Scope -> Scope
 assignVariable k t = update (assignVariable' k t)
 
@@ -142,6 +156,7 @@ returnVariable' t s@Function{} =
   }
 returnVariable' _ _ = error "cannot return anywhere except in a function"
 
+-- | returnVariable adds given type to the function scope at given path.
 returnVariable :: Type -> Path -> Scope -> Scope
 returnVariable t = update (returnVariable' t)
 
@@ -159,6 +174,7 @@ addParameterType (Position idx) t s =
   in addParameterType (Keyword (l !! reverseIndex l idx)) t s
 
 -- TODO Handle call to class constructor
+-- | call resolves variable references in the function scope.
 call :: Type -> Map.Map Argument Type -> Scope -> Scope
 call FuncRef{ refering = p } args s =
   resolveReferences p $
@@ -173,6 +189,9 @@ getReturnType' VarRef{ types = (hd:_) } = hd
 getReturnType' (Either(t1, t2)) = Either(getReturnType' t1, getReturnType' t2)
 getReturnType' t = t
 
+-- | getReturnType gets return type from function scope produced by last call.
+-- In the case of `ClassTypeRef`, it returns a `ClassRef` with the same
+-- refering path.
 getReturnType :: Type -> Scope -> Type
 getReturnType FuncRef{ refering = p } s =
   maybe (Type . CType $ Void) getReturnType' . returnType $ get p s
@@ -201,11 +220,13 @@ addParameter' param t funcPath upper =
           parameterType = updateParams ident
         }) funcPath upper
 
+-- | addParameter adds parameter to function scope at given path.
 addParameter :: Parameter -> Maybe Type -> Path -> Scope -> Scope
 addParameter param t p =
   let (upper, func) = split p
   in update (addParameter' param t func) upper
 
+-- | getAttribute returns type of attribute from given type reference.
 getAttribute :: Scope -> Type -> String -> Type
 getAttribute _ VarRef{ identifier = i, types = [] } _ =
   error ("variable " ++ i ++ " referenced before assignement")
@@ -226,6 +247,7 @@ getAttribute _ _ _ =
   error "this expression has no attribute"
 
 -- TODO Handle VarRef, ParamRef
+-- | getReferencePath return class reference.
 getReferencePath :: Type -> Path
 getReferencePath ClassRef{ refering = p } = p
 getReferencePath _ = error "type does not hold any reference path"
