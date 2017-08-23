@@ -1,5 +1,9 @@
 # Revision history for picon
 
+## 0.1.0.4 -- 23-08-2017
+
+* Revise invalid installation command.
+
 ## 0.1.0.3 -- 23-08-2017
 
 * Add some documentation to the code.
