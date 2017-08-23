@@ -12,7 +12,9 @@ Python.
 ## Installation
 
 ```shell
-cabal install picon
+git clone git@github.com:fische/picon.git
+cd picon/
+cabal install
 ```
 
 ## Usage
