@@ -40,6 +40,7 @@ mergeTypes' acc (hd:tl)
   | acc /= hd = error "Multi-typed variables are not yet supported"
   | otherwise = mergeTypes' hd tl
 
+-- | mergeTypes merges given cython type into one single cython type.
 mergeTypes :: [CythonType] -> CythonType
 mergeTypes [] = CType Void
 mergeTypes (hd:tl) = mergeTypes' hd tl

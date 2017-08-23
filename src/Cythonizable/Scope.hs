@@ -66,12 +66,16 @@ getCythonType s t =
   let l = evalState (mapM (getCythonType' s) t) Set.empty
   in mergeTypes $ catMaybes l
 
+-- | getFunctionReturnType resolves return type of current function scope into
+-- a cython type.
 getFunctionReturnType :: Scope -> Scope -> CythonType
 getFunctionReturnType global Function{returnType = r} =
   maybe (CType Void) (\t -> getCythonType global [t]) r
 getFunctionReturnType _ _ =
   error "cannot get return type of something else than a function"
 
+-- | getLocalVariableType resolves types of variable with the given identifier
+-- in current scope.
 getLocalVariableType :: Scope -> String -> Scope -> CythonType
 getLocalVariableType global ident s =
   let err = error ("variable " ++ ident ++ " has not been declared")
@@ -83,6 +87,8 @@ getLocalVariables' _ _ [FuncRef{}] acc = acc
 getLocalVariables' _ _ [ClassTypeRef{}] acc = acc
 getLocalVariables' global k v acc = Map.insert k (getCythonType global v) acc
 
+-- | getLocalVariables resolves types of variables declared in current scope.
+-- It does not include function parameters in the case of a function scope.
 getLocalVariables :: Scope -> Scope -> Map.Map String CythonType
 getLocalVariables global Function{parameterType = p, variables = v} =
   Map.foldrWithKey (getLocalVariables' global) Map.empty $ Map.difference v p
@@ -96,6 +102,8 @@ dropNextScope' (Just (hd:tl)) = do
   put hd
   return $ Just tl
 
+-- | dropNextScope drops next scope with given identifier from the current
+-- scope. It returns new current scope and the dropped scope.
 dropNextScope :: String -> Scope -> (Scope, Scope)
 dropNextScope i curr =
   let emptyFunc = Function{
