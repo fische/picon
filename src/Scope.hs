@@ -21,6 +21,7 @@ import Monadic.Map
 import qualified Control.Monad.State as State
 
 import Language.Cython.Type
+import Language.Python.Common.AST
 
 -- TODO Handle builtins (print, etc)
 -- TODO Handle special class methods
@@ -79,10 +80,14 @@ split (Node(ident, next)) =
 
 -- | Scope represents a python program through a scope tree.
 data Scope =
+  Program {
+    scopes :: Map.Map String [Scope]
+  } |
   Module {
     path :: Path,
     scopes :: Map.Map String [Scope],
-    variables :: Map.Map String [Type]
+    variables :: Map.Map String [Type],
+    pymodule :: ModuleSpan
   } |
   Class {
     path :: Path,

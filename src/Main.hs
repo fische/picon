@@ -1,10 +1,12 @@
 module Main where
 
 import System.FilePath.Posix
+import System.Directory
 
+import qualified Data.Map.Strict as Map
 import Data.Semigroup ((<>))
 
-import Control.Monad.State (State, evalState)
+import Control.Monad.State (evalState)
 
 import Options.Applicative
 
@@ -23,13 +25,14 @@ import Language.Cython.PrettyAST ()
 import Analyzable
 import Cythonizable
 import Options
+import Scope
 
 parseModule ::
   (String -> String -> Either ParseError.ParseError (ModuleSpan, [Token])) ->
   String -> IO (Either ParseError.ParseError ModuleSpan)
-parseModule parse path = do
-  input <- readFile path
-  return . fmap fst $ parse input path
+parseModule parse p = do
+  input <- readFile p
+  return . fmap fst $ parse input p
 
 opts :: Parser Options
 opts =
@@ -40,12 +43,12 @@ opts =
       <> metavar "TARGET_DIR"
       <> help "Target directory where to write translated files")) <*>
   (flag
-    (parseModule Python3.parseModule)
-    (parseModule Python2.parseModule)
+    (Main.parseModule Python3.parseModule)
+    (Main.parseModule Python2.parseModule)
     (short '2'
       <> help "Enable Python version 2 parsing") <|>
   flag'
-    (parseModule Python3.parseModule)
+    (Main.parseModule Python3.parseModule)
     (short '3'
       <> help "Enable Python version 3 parsing"))
 
@@ -55,19 +58,27 @@ file = strArgument (metavar "FILE")
 allOpts :: Parser (Options, String)
 allOpts = liftA2 (\o f -> (o, f)) opts file
 
+cythonize' :: Scope -> String -> [Scope] -> AST.Module SrcSpan
+cythonize' global _ [m] =
+  let cython = Cythonizable.cythonize (pymodule m)
+      ctx = Cythonizable.Context {
+        globalScope = global,
+        currentScope = m
+      }
+  in evalState cython ctx
+cythonize' _ k _ = error $ "module " ++ k ++ " has not been loaded"
+
 cythonize :: (Options, String) -> IO ()
 cythonize (o, f) = do
-  parsed <- parser o f
-  case parsed of
-      Left err -> putStrLn $ prettyText err
-      Right pymodule ->
-        let analysis = unstashAll $ analyze pymodule newContext
-            cython = Cythonizable.cythonize pymodule
-              :: State Cythonizable.Context (AST.Module SrcSpan)
-            path = replaceExtension (maybe f (replaceDirectory f) $
-              targetDir o) "pyx"
-        in writeFile path . prettyText . evalState cython $
-            fromAnalysis analysis
+  absolutePath <- makeAbsolute f
+  (newCtx, m) <- addModule absolutePath $
+    newContext (takeDirectory absolutePath) (parser o)
+  analysis <- analyze m newCtx >>= unstashAll
+  let global = scope analysis
+      write (k, v) = let p = replaceExtension (maybe k (replaceDirectory k) $
+                              targetDir o) "pyx"
+                     in writeFile p $ prettyText v
+  mapM_ write . Map.assocs $ Map.mapWithKey (cythonize' global) $ scopes global
 
 main :: IO ()
 main =

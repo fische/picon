@@ -5,6 +5,8 @@ module Analyzable (
   module Analyzable.Context
 ) where
 
+import System.FilePath.Posix
+
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
 
@@ -13,6 +15,12 @@ import Language.Python.Common.SrcLocation (SrcSpan(..))
 import Language.Cython.Type
 
 import Analyzable.Context
+
+analyzeModule :: String -> Context -> IO Context
+analyzeModule name ctx = do
+  let path = basePath ctx </> name <.> "py"
+  (newCtx, pymodule) <- addModule path ctx
+  analyze pymodule newCtx
 
 getOpType :: AST.Op a -> Maybe Type
 getOpType AST.And{} = Just . Type $ CType BInt
@@ -92,20 +100,20 @@ getArgumentType :: Context -> [AST.Argument a] -> Map.Map Argument Type
 getArgumentType ctx args = getPositionalArgumentType ctx args Map.empty
 
 class Analyzable t where
-  analyze :: t -> Context -> Context
-  default analyze :: t -> Context -> Context
-  analyze _ = id
+  analyze :: t -> Context -> IO Context
+  default analyze :: t -> Context -> IO Context
+  analyze _ = return
 
 instance (Analyzable t) => Analyzable [t] where
-  analyze [] ctx = ctx
-  analyze (hd:tl) ctx = analyze tl $ analyze hd ctx
+  analyze [] ctx = return ctx
+  analyze (hd:tl) ctx = analyze hd ctx >>= analyze tl
 
 instance (Analyzable t) => Analyzable (Maybe t) where
-  analyze Nothing ctx = ctx
+  analyze Nothing ctx = return ctx
   analyze (Just v) ctx = analyze v ctx
 
 instance (Analyzable t1, Analyzable t2) => Analyzable (t1, t2) where
-  analyze (v1, v2) ctx = analyze v2 $ analyze v1 ctx
+  analyze (v1, v2) ctx = analyze v1 ctx >>= analyze v2
 
 instance Analyzable (AST.Ident SrcSpan)
 instance Analyzable (AST.Op SrcSpan)
@@ -115,13 +123,13 @@ instance Analyzable (AST.Module SrcSpan) where
   analyze (AST.Module stmts) = analyze stmts
 
 instance Analyzable (AST.ImportItem SrcSpan) where
-  analyze (AST.ImportItem item as _) ctx = analyze as $ analyze item ctx
+  analyze (AST.ImportItem item as _) ctx = analyze item ctx >>= analyze as
 --
 instance Analyzable (AST.FromItem SrcSpan) where
-  analyze (AST.FromItem item as _) ctx = analyze as $ analyze item ctx
+  analyze (AST.FromItem item as _) ctx = analyze item ctx >>= analyze as
 
 instance Analyzable (AST.FromItems SrcSpan) where
-  analyze (AST.ImportEverything _) ctx = ctx
+  analyze (AST.ImportEverything _) ctx = return ctx
   analyze (AST.FromItems items _) ctx = analyze items ctx
 
 instance Analyzable (AST.ImportRelative SrcSpan) where
@@ -129,40 +137,40 @@ instance Analyzable (AST.ImportRelative SrcSpan) where
 
 instance Analyzable (AST.Statement SrcSpan) where
   analyze (AST.Import items _) ctx = analyze items ctx
-  analyze (AST.FromImport m items _) ctx = analyze items $ analyze m ctx
-  analyze (AST.While cond body e _) ctx =
-    let bodyCtx = exitBlock ctx . analyze body $ analyze cond ctx
-    in exitBlock bodyCtx $ analyze e bodyCtx
-  analyze (AST.For targets gen body e _) ctx =
-    let bodyCtx = exitBlock ctx . analyze body . analyze gen $ analyze targets ctx
-    in exitBlock bodyCtx $ analyze e bodyCtx
+  analyze (AST.FromImport m items _) ctx = analyze m ctx >>= analyze items
+  analyze (AST.While cond body e _) ctx = do
+    bodyCtx <- fmap (exitBlock ctx) $ analyze cond ctx >>= analyze body
+    exitBlock bodyCtx <$> analyze e bodyCtx
+  analyze (AST.For targets gen body e _) ctx = do
+    bodyCtx <- fmap (exitBlock ctx) $ analyze targets ctx >>= analyze gen >>= analyze body
+    exitBlock bodyCtx <$> analyze e bodyCtx
   analyze (AST.Fun name args _ body _) ctx =
-    let parse = analyze body . analyze args . enablePositionalParametersFlag
-    in stashFunction (AST.ident_string name) parse ctx
+    let parse c = analyze args (enablePositionalParametersFlag c) >>= analyze body
+    in return $ stashFunction (AST.ident_string name) parse ctx
   -- TODO Handle inheritance
   analyze (AST.Class name _ body _) ctx =
-    exitClass ctx . analyze body $ enterClass (AST.ident_string name) ctx
-  analyze (AST.Conditional guards e _) ctx =
-    let guardsCtx = analyze guards ctx
-    in exitBlock guardsCtx $ analyze e guardsCtx
-  analyze (AST.Assign [to] expr _) ctx =
-    let exprCtx = analyze expr ctx
-        (pos, ident) = getExprReferencePath exprCtx to
-    in assignVariable pos ident (getExprType exprCtx expr) exprCtx
+    exitClass ctx <$> analyze body (enterClass (AST.ident_string name) ctx)
+  analyze (AST.Conditional guards e _) ctx = do
+    guardsCtx <- analyze guards ctx
+    exitBlock guardsCtx <$> analyze e guardsCtx
+  analyze (AST.Assign [to] expr _) ctx = do
+    exprCtx <- analyze expr ctx
+    let (pos, ident) = getExprReferencePath exprCtx to
+    return $ assignVariable pos ident (getExprType exprCtx expr) exprCtx
   -- TODO Handle when assigning multiple wariables at the same time
-  analyze (AST.Assign tos expr _) ctx = analyze expr $ analyze tos ctx
+  analyze (AST.Assign tos expr _) ctx = analyze tos ctx >>= analyze expr
   analyze (AST.AugmentedAssign to op expr _) ctx =
-    analyze expr . analyze op $ analyze to ctx
+    analyze to ctx >>= analyze op >>= analyze expr
   analyze (AST.Decorated decorators def _) ctx =
-    analyze decorators $ analyze def ctx
-  analyze (AST.Return expr _) ctx =
-    let exprCtx = analyze expr ctx
-        exprType = maybe (Type . CType $ Void) (getExprType exprCtx) expr
-    in returnVariable exprType exprCtx
+    analyze def ctx >>= analyze decorators
+  analyze (AST.Return expr _) ctx = do
+    exprCtx <- analyze expr ctx
+    let exprType = maybe (Type . CType $ Void) (getExprType exprCtx) expr
+    return $ returnVariable exprType exprCtx
   analyze (AST.Try body excepts e fin _) ctx =
-    analyze fin . analyze e . analyze excepts $ analyze body ctx
+    analyze body ctx >>= analyze excepts >>= analyze e >>= analyze fin
   analyze (AST.Raise expr _) ctx = analyze expr ctx
-  analyze (AST.With wctx body _) ctx = analyze body $ analyze wctx ctx
+  analyze (AST.With wctx body _) ctx = analyze wctx ctx >>= analyze body
   analyze (AST.Delete exprs _) ctx = analyze exprs ctx
   analyze (AST.StmtExpr expr _) ctx = analyze expr ctx
   analyze (AST.Global _ _) _ =
@@ -171,8 +179,8 @@ instance Analyzable (AST.Statement SrcSpan) where
     error "nonlocal bindings are not yet supported"
   analyze (AST.Assert exprs _) ctx = analyze exprs ctx
   analyze (AST.Print _ exprs _ _) ctx = analyze exprs ctx
-  analyze (AST.Exec expr t _) ctx = analyze t $ analyze expr ctx
-  analyze _ ctx = ctx
+  analyze (AST.Exec expr t _) ctx = analyze expr ctx >>= analyze t
+  analyze _ ctx = return ctx
 
 instance Analyzable (AST.RaiseExpr SrcSpan) where
   analyze (AST.RaiseV3 expr) ctx = analyze expr ctx
@@ -182,11 +190,11 @@ instance Analyzable (AST.Decorator SrcSpan) where
   analyze (AST.Decorator _ args _) = analyze args
 
 instance Analyzable (AST.Parameter SrcSpan) where
-  analyze (AST.Param ident _ dflt _) ctx =
-    let dfltCtx = analyze dflt ctx
-        dfltType = fmap (getExprType dfltCtx) dflt
-    in addParameter (AST.ident_string ident) dfltType dfltCtx
-  analyze AST.EndPositional{} ctx = disablePositionalParametersFlag ctx
+  analyze (AST.Param ident _ dflt _) ctx = do
+    dfltCtx <- analyze dflt ctx
+    let dfltType = fmap (getExprType dfltCtx) dflt
+    return $ addParameter (AST.ident_string ident) dfltType dfltCtx
+  analyze AST.EndPositional{} ctx = return $ disablePositionalParametersFlag ctx
   analyze AST.UnPackTuple{} _ = error "tuples are not yet supported"
   analyze AST.VarArgsPos{} _ =
     error "excess positional parameter is not yet supported"
@@ -202,13 +210,13 @@ instance Analyzable (AST.Argument SrcSpan) where
     error "excess keyword parameter is not yet supported"
 
 instance Analyzable (AST.Handler SrcSpan) where
-  analyze (AST.Handler clause suite _) ctx = analyze suite $ analyze clause ctx
+  analyze (AST.Handler clause suite _) ctx = analyze clause ctx >>= analyze suite
 
 instance Analyzable (AST.ExceptClause SrcSpan) where
   analyze (AST.ExceptClause expr _) = analyze expr
 
 instance Analyzable (AST.Comprehension SrcSpan) where
-  analyze (AST.Comprehension expr for _) ctx = analyze for $ analyze expr ctx
+  analyze (AST.Comprehension expr for _) ctx = analyze expr ctx >>= analyze for
 
 instance Analyzable (AST.ComprehensionExpr SrcSpan) where
   analyze (AST.ComprehensionExpr expr) ctx = analyze expr ctx
@@ -216,28 +224,28 @@ instance Analyzable (AST.ComprehensionExpr SrcSpan) where
 
 instance Analyzable (AST.CompFor SrcSpan) where
   analyze (AST.CompFor for in_expr iter _) ctx =
-    analyze iter . analyze in_expr $ analyze for ctx
+    analyze for ctx >>= analyze in_expr >>= analyze iter
 
 instance Analyzable (AST.CompIf SrcSpan) where
-  analyze (AST.CompIf expr iter _) ctx = analyze iter $ analyze expr ctx
+  analyze (AST.CompIf expr iter _) ctx = analyze expr ctx >>= analyze iter
 
 instance Analyzable (AST.CompIter SrcSpan) where
   analyze (AST.IterFor iter _) ctx = analyze iter ctx
   analyze (AST.IterIf iter _) ctx = analyze iter ctx
 
 instance Analyzable (AST.Expr SrcSpan) where
-  analyze (AST.Call fun args _) ctx =
-    let funCtx = analyze fun $ analyze args ctx
-    in call (getExprType funCtx fun) (getArgumentType funCtx args) funCtx
-  analyze (AST.Subscript e expr _) ctx = analyze expr $ analyze e ctx
-  analyze (AST.SlicedExpr expr slice _) ctx = analyze slice $ analyze expr ctx
+  analyze (AST.Call fun args _) ctx = do
+    funCtx <- analyze args ctx >>= analyze fun
+    call (getExprType funCtx fun) (getArgumentType funCtx args) funCtx
+  analyze (AST.Subscript e expr _) ctx = analyze e ctx >>= analyze expr
+  analyze (AST.SlicedExpr expr slice _) ctx = analyze expr ctx >>= analyze slice
   analyze (AST.CondExpr true cond false _) ctx =
-    analyze false . analyze cond $ analyze true ctx
+    analyze true ctx >>= analyze cond >>= analyze false
   analyze (AST.BinaryOp op left right _) ctx =
-    analyze right . analyze left $ analyze op ctx
-  analyze (AST.UnaryOp op expr _) ctx = analyze expr $ analyze op ctx
+    analyze op ctx >>= analyze left >>= analyze right
+  analyze (AST.UnaryOp op expr _) ctx = analyze op ctx >>= analyze expr
   analyze (AST.Dot expr _ _) ctx = analyze expr ctx
-  analyze (AST.Lambda args body _) ctx = analyze body $ analyze args ctx
+  analyze (AST.Lambda args body _) ctx = analyze args ctx >>= analyze body
   analyze (AST.Tuple exprs _) ctx = analyze exprs ctx
   analyze (AST.Yield arg _) ctx = analyze arg ctx
   analyze (AST.Generator comp _) ctx = analyze comp ctx
@@ -250,17 +258,17 @@ instance Analyzable (AST.Expr SrcSpan) where
   analyze (AST.Starred expr _) ctx = analyze expr ctx
   analyze (AST.Paren expr _) ctx = analyze expr ctx
   analyze (AST.StringConversion expr _) ctx = analyze expr ctx
-  analyze _ ctx = ctx
+  analyze _ ctx = return ctx
 
 instance Analyzable (AST.YieldArg SrcSpan) where
   analyze (AST.YieldFrom expr _) ctx = analyze expr ctx
   analyze (AST.YieldExpr expr) ctx = analyze expr ctx
 
 instance Analyzable (AST.DictMappingPair SrcSpan) where
-  analyze (AST.DictMappingPair expr1 expr2) ctx = analyze expr2 $ analyze expr1 ctx
+  analyze (AST.DictMappingPair expr1 expr2) ctx = analyze expr1 ctx >>= analyze expr2
 
 instance Analyzable (AST.Slice SrcSpan) where
   analyze (AST.SliceProper lower upper stride _) ctx =
-    analyze stride . analyze upper $ analyze lower ctx
+    analyze lower ctx >>= analyze upper >>= analyze stride
   analyze (AST.SliceExpr expr _) ctx = analyze expr ctx
-  analyze (AST.SliceEllipsis _) ctx = ctx
+  analyze (AST.SliceEllipsis _) ctx = return ctx

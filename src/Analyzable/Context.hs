@@ -1,6 +1,7 @@
 module Analyzable.Context (
   Context(..),
   newContext,
+  addModule,
   Scope.Type(..),
   Scope.Path(..),
   Scope.Argument(..),
@@ -21,9 +22,16 @@ module Analyzable.Context (
   Scope.getReferencePath
 ) where
 
+import Control.Monad
+
 import qualified Data.Map.Strict as Map
 import Data.Bool
 import Data.Maybe
+
+import Language.Python.Common.Pretty (prettyText)
+import Language.Python.Common.PrettyParseError ()
+import Language.Python.Common.ParseError
+import qualified Language.Python.Common.AST as AST
 
 import Analyzable.Scope as Scope
 
@@ -40,17 +48,36 @@ data Context =
     scope :: Scope,
     -- | functionsStash contains the path of functions' scope and their parsing
     -- function.
-    functionsStash :: Map.Map Path (Context -> Context)
+    functionsStash :: Map.Map Path (Context -> IO Context),
+    -- | parseModule parses the python module at the given path.
+    parseModule :: String -> IO (Either ParseError AST.ModuleSpan),
+    -- | basePath is the path to the directory of the main module.
+    basePath :: String
   }
 
 -- | newContext initializes a new Context with an empty Module scope.
-newContext :: Context
-newContext = Context {
+newContext :: String -> (String -> IO (Either ParseError AST.ModuleSpan)) ->
+  Context
+newContext base f = Context {
   positionalParameters = True,
   position = Leaf,
-  scope = newModule,
-  functionsStash = Map.empty
+  scope = newProgram,
+  functionsStash = Map.empty,
+  basePath = base,
+  parseModule = f
 }
+
+addModule :: String -> Context -> IO (Context, AST.ModuleSpan)
+addModule p ctx = do
+  parsed <- parseModule ctx p
+  case parsed of
+    Left err -> error $ prettyText err
+    Right m -> do
+      let (newScope, newPath) = Scope.add p (newModule m) Leaf $ scope ctx
+      return (ctx{
+        scope = newScope,
+        position = newPath
+      }, m)
 
 -- | getVariableReference retrieves the variable reference or type from the
 -- current scope.
@@ -101,7 +128,7 @@ exitClass curr c =
 -- | stashFunction adds a function scope to the current one with the given
 -- identifier. It also stashes the given parsing function with the function
 -- scope path.
-stashFunction :: String -> (Context -> Context) -> Context -> Context
+stashFunction :: String -> (Context -> IO Context) -> Context -> Context
 stashFunction ident parse ctx =
   let (newScope, newPath) =
         Scope.addFunction ident (position ctx) (scope ctx)
@@ -112,16 +139,16 @@ stashFunction ident parse ctx =
 
 -- | unstashFunction removes function at given path from stash. If it was
 -- actually in the stash, it calls parsing function with current context.
-unstashFunction :: Path -> Context -> Context
+unstashFunction :: Path -> Context -> IO Context
 unstashFunction p ctx =
   let del _ _ = Nothing
       (parse, stash) = Map.updateLookupWithKey del p (functionsStash ctx)
-  in maybe ctx (\f ->
-      let newCtx = f ctx {
+  in maybe (return ctx) (\f -> do
+      newCtx <- f ctx {
             position = p,
             functionsStash = stash
           }
-      in newCtx {
+      return newCtx {
         position = position ctx
       }) parse
 
@@ -129,23 +156,23 @@ unstashFunction p ctx =
 -- In the case of a `FuncRef`, it unstashes the function, if it is in stash,
 -- and calls it.
 -- In the case of a `ClassTypeRef`, it does not do anything.
-call :: Type -> Map.Map Argument Type -> Context -> Context
-call t@FuncRef{ refering = p } args ctx =
-  let newCtx = unstashFunction p ctx
-  in newCtx{
+call :: Type -> Map.Map Argument Type -> Context -> IO Context
+call t@FuncRef{ refering = p } args ctx = do
+  newCtx <- unstashFunction p ctx
+  return newCtx{
     scope = Scope.call t args $ scope newCtx
   }
 call VarRef{ types = (hd:_) } args ctx =
   Analyzable.Context.call hd args ctx
 -- TODO Call __init__
-call ClassTypeRef{} _ ctx = ctx
+call ClassTypeRef{} _ ctx = return ctx
 call _ _ _ = error "cannot call non-callable objects"
 
-unstashAll' :: [Path] -> Context -> Context
-unstashAll' l ctx = foldl (flip unstashFunction) ctx l
+unstashAll' :: [Path] -> Context -> IO Context
+unstashAll' l ctx = foldM (flip unstashFunction) ctx l
 
 -- | unstashAll removes all functions from the stash and parses them all.
-unstashAll :: Context -> Context
+unstashAll :: Context -> IO Context
 unstashAll ctx =
   unstashAll' (Map.keys $ functionsStash ctx) ctx
 

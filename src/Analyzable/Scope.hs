@@ -2,6 +2,7 @@ module Analyzable.Scope (
   module Scope,
   Argument(..),
   Parameter(..),
+  newProgram,
   newModule,
   exitBlock,
   addFunction,
@@ -20,6 +21,7 @@ import qualified Data.Map.Strict as Map
 
 import Scope
 
+import qualified Language.Python.Common.AST as AST
 import Language.Cython.Type
 
 -- | Argument represents function call arguments.
@@ -34,12 +36,19 @@ data Parameter =
   NonPositional String
   deriving (Eq,Ord,Show)
 
+-- newProgram creates an empty Program scope.
+newProgram :: Scope
+newProgram = Program {
+  scopes = Map.empty
+}
+
 -- newModule creates an empty Module scope.
-newModule :: Scope
-newModule = Module {
+newModule :: AST.ModuleSpan -> Scope
+newModule m = Module {
   path = Leaf,
   scopes = Map.empty,
-  variables = Map.empty
+  variables = Map.empty,
+  pymodule = m
 }
 
 exitBlock' :: Scope -> Scope -> Scope
@@ -100,15 +109,21 @@ addClass i p s =
   in (assignVariable i ref p fScope, fPath)
 
 getReferenceFlag :: Scope -> Bool
+getReferenceFlag Program{} = True
 getReferenceFlag Module{} = True
 getReferenceFlag Class{} = False
 getReferenceFlag Function{} = True
 
 getVariableReference' :: String -> Path -> Scope -> Either Bool Type
+getVariableReference' i Leaf Program{} = error ("variable " ++ i ++ " referenced before assignement")
 getVariableReference' i Leaf s =
   let getHead [] = error ("variable " ++ i ++ " referenced before assignement")
       getHead (hd:_) = Right hd
   in maybe (Left $ getReferenceFlag s) getHead $ Map.lookup i (variables s)
+getVariableReference' i (Node((ident, idx), p)) s@Program{} =
+  let err = error "next path level not found"
+      f l = getVariableReference' i p (l !! reverseIndex l idx)
+  in maybe err f $ Map.lookup ident (scopes s)
 getVariableReference' i (Node((ident, idx), p)) s@Class{} =
   let err = error "next path level not found"
       f l = getVariableReference' i p (l !! reverseIndex l idx)
