@@ -20,6 +20,15 @@ newtype Module annot = Module (Suite annot)
 type Suite annot = [Statement annot]
 
 data Statement annot =
+  Import {
+    import_items :: [AST.ImportItem annot],
+    stmt_annot :: annot
+  } |
+  FromImport {
+    from_module :: AST.ImportRelative annot,
+    from_items :: AST.FromItems annot,
+    stmt_annot :: annot
+  } |
   While {
     while_cond :: AST.Expr annot,
     while_body :: Suite annot,

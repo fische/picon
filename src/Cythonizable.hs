@@ -37,6 +37,10 @@ instance Cythonizable (AST.Module SrcSpan) (Module SrcSpan) where
       (not $ null vars)
 
 instance Cythonizable (AST.Statement SrcSpan) (Statement SrcSpan) where
+  cythonize (AST.Import items annot) =
+    return $ Import items annot
+  cythonize (AST.FromImport m from annot) =
+    return $ FromImport m from annot
   cythonize (AST.Fun name args r body annot) = do
     funCtx <- dropNextScope $ AST.ident_string name
     let (returnType, retCtx) = runState getFunctionReturnType funCtx

@@ -35,6 +35,9 @@ prettyGuards ((cond,body):guards) =
   prettyGuards guards
 
 instance Pretty (Statement annot) where
+  pretty (Import { import_items = items}) = text "cimport" <+> commaList items
+  pretty stmt@(FromImport {})
+    = text "from" <+> pretty (from_module stmt) <+> text "cimport" <+> pretty (from_items stmt)
   pretty stmt@(While {}) =
     text "while" <+> pretty (while_cond stmt) <> colon $+$
     indent (prettySuite (while_body stmt)) $+$ optionalKeywordSuite "else" (while_else stmt)
