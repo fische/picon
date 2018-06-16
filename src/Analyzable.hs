@@ -5,10 +5,9 @@ module Analyzable (
   module Analyzable.Context
 ) where
 
-import System.FilePath.Posix
-
 import qualified Data.Map.Strict as Map
-import Data.Maybe (fromMaybe)
+import Data.Maybe (maybe, fromMaybe, fromJust)
+import Data.Bool (bool)
 
 import qualified Language.Python.Common.AST as AST
 import Language.Python.Common.SrcLocation (SrcSpan(..))
@@ -16,11 +15,17 @@ import Language.Cython.Type
 
 import Analyzable.Context
 
-analyzeModule :: String -> Context -> IO Context
-analyzeModule name ctx = do
-  let path = basePath ctx </> name <.> "py"
+analyzeModule' :: String -> Context -> IO Context
+analyzeModule' path ctx = do
   (newCtx, pymodule) <- addModule path ctx
-  analyze pymodule newCtx
+  analyzed <- analyze pymodule newCtx
+  return analyzed{
+    position = position ctx
+  }
+
+analyzeModule :: String -> Context -> IO Context
+analyzeModule path ctx =
+  bool (analyzeModule' path ctx) (return ctx) $ moduleExists path ctx
 
 getOpType :: AST.Op a -> Maybe Type
 getOpType AST.And{} = Just . Type $ CType BInt
@@ -123,21 +128,44 @@ instance Analyzable (AST.Module SrcSpan) where
   analyze (AST.Module stmts) = analyze stmts
 
 instance Analyzable (AST.ImportItem SrcSpan) where
+  analyze (AST.ImportItem [item] as _) ctx = do
+    let name = AST.ident_string item
+        path = getModulePath name ctx
+    newCtx <- analyzeModule path ctx
+    return $ addModuleReference path (maybe name AST.ident_string as) newCtx
   analyze (AST.ImportItem item as _) ctx = analyze item ctx >>= analyze as
---
+
 instance Analyzable (AST.FromItem SrcSpan) where
-  analyze (AST.FromItem item as _) ctx = analyze item ctx >>= analyze as
+  analyze (AST.FromItem item as _) ctx =
+    let mPath = fromJust $ importingModulePath ctx
+        ident = AST.ident_string item
+        refName = AST.ident_string $ fromMaybe item as
+    in return $ addModuleVariableReference mPath ident refName ctx
 
 instance Analyzable (AST.FromItems SrcSpan) where
-  analyze (AST.ImportEverything _) ctx = return ctx
+  analyze (AST.ImportEverything _) ctx =
+    let mPath = fromJust $ importingModulePath ctx
+        vars = getModuleVariables mPath ctx
+    in return $ foldl (\c i -> addModuleVariableReference mPath i i c) ctx vars
   analyze (AST.FromItems items _) ctx = analyze items ctx
 
 instance Analyzable (AST.ImportRelative SrcSpan) where
-  analyze (AST.ImportRelative _ m _) = analyze m
+  analyze (AST.ImportRelative _ (Just [item]) _) ctx = do
+    let name = AST.ident_string item
+        path = getModulePath name ctx
+    newCtx <- analyzeModule path ctx
+    return newCtx {
+      importingModulePath = Just path
+    }
+  analyze (AST.ImportRelative _ m _) ctx = analyze m ctx
 
 instance Analyzable (AST.Statement SrcSpan) where
   analyze (AST.Import items _) ctx = analyze items ctx
-  analyze (AST.FromImport m items _) ctx = analyze m ctx >>= analyze items
+  analyze (AST.FromImport m items _) ctx = do
+    newCtx <- analyze m ctx >>= analyze items
+    return newCtx{
+      importingModulePath = Nothing
+    }
   analyze (AST.While cond body e _) ctx = do
     bodyCtx <- fmap (exitBlock ctx) $ analyze cond ctx >>= analyze body
     exitBlock bodyCtx <$> analyze e bodyCtx

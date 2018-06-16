@@ -2,6 +2,11 @@ module Analyzable.Context (
   Context(..),
   newContext,
   addModule,
+  moduleExists,
+  getModulePath,
+  addModuleReference,
+  addModuleVariableReference,
+  getModuleVariables,
   Scope.Type(..),
   Scope.Path(..),
   Scope.Argument(..),
@@ -21,6 +26,8 @@ module Analyzable.Context (
   Analyzable.Context.getAttribute,
   Scope.getReferencePath
 ) where
+
+import System.FilePath.Posix
 
 import Control.Monad
 
@@ -52,7 +59,9 @@ data Context =
     -- | parseModule parses the python module at the given path.
     parseModule :: String -> IO (Either ParseError AST.ModuleSpan),
     -- | basePath is the path to the directory of the main module.
-    basePath :: String
+    basePath :: String,
+    -- | importingModulePath is the path to the module that's being imported.
+    importingModulePath :: Maybe String
   }
 
 -- | newContext initializes a new Context with an empty Module scope.
@@ -64,20 +73,45 @@ newContext base f = Context {
   scope = newProgram,
   functionsStash = Map.empty,
   basePath = base,
-  parseModule = f
+  parseModule = f,
+  importingModulePath = Nothing
 }
+
+moduleExists :: String -> Context -> Bool
+moduleExists p ctx =
+  Scope.exists (Node((p, 0), Leaf)) $ scope ctx
+
+addModuleReference :: String -> String -> Context -> Context
+addModuleReference p refName =
+  Analyzable.Context.assignVariable Nothing refName Scope.ModuleRef{
+    refering = Node((p, 0), Leaf)
+  }
 
 addModule :: String -> Context -> IO (Context, AST.ModuleSpan)
 addModule p ctx = do
   parsed <- parseModule ctx p
   case parsed of
     Left err -> error $ prettyText err
-    Right m -> do
+    Right m ->
       let (newScope, newPath) = Scope.add p (newModule m) Leaf $ scope ctx
-      return (ctx{
+      in return (ctx{
         scope = newScope,
         position = newPath
       }, m)
+
+getModulePath :: String -> Context -> String
+getModulePath name ctx = basePath ctx </> name <.> "py"
+
+addModuleVariableReference :: String -> String -> String -> Context -> Context
+addModuleVariableReference p ident refName =
+  Analyzable.Context.assignVariable Nothing refName Scope.ModuleVarRef{
+    identifier = ident,
+    refering = Node((p, 0), Leaf)
+  }
+
+getModuleVariables :: String -> Context -> [String]
+getModuleVariables p ctx =
+  Map.keys . Scope.variables $ Scope.get (Node((p, 0), Leaf)) $ scope ctx
 
 -- | getVariableReference retrieves the variable reference or type from the
 -- current scope.
@@ -164,6 +198,9 @@ call t@FuncRef{ refering = p } args ctx = do
   }
 call VarRef{ types = (hd:_) } args ctx =
   Analyzable.Context.call hd args ctx
+call ModuleVarRef{ identifier = i, refering = r } args ctx =
+  let t = Scope.getVariableReference i r (scope ctx)
+  in Analyzable.Context.call t args ctx
 -- TODO Call __init__
 call ClassTypeRef{} _ ctx = return ctx
 call _ _ _ = error "cannot call non-callable objects"

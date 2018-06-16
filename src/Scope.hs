@@ -3,6 +3,7 @@ module Scope (
   Path(..),
   split,
   Scope(..),
+  exists,
   add,
   get,
   update,
@@ -49,6 +50,15 @@ data Type =
   } |
   -- | ClassRef represents a reference to a class instance.
   ClassRef {
+    refering :: Path
+  } |
+  -- | ModuleRef represents a reference to a module.
+  ModuleRef {
+    refering :: Path
+  } |
+  -- | ModuleVarRef represents a reference to a variable from a module.
+  ModuleVarRef {
+    identifier :: String,
     refering :: Path
   }
   deriving (Eq,Ord,Show)
@@ -109,6 +119,12 @@ reverseIndex :: [a] -> Int -> Int
 reverseIndex l idx
   | length l > idx = length l - idx - 1
   | otherwise = error "index is outside list range"
+
+exists :: Path -> Scope -> Bool
+exists Leaf _ = True
+exists (Node((ident, idx), p)) s =
+  let found = Map.lookup ident (scopes s)
+  in maybe False (\l -> exists p $ l !! reverseIndex l idx) found
 
 add' :: String -> Path -> Scope -> Maybe [Scope] ->
   State.State Path (Maybe [Scope])

@@ -211,6 +211,9 @@ getReturnType :: Type -> Scope -> Type
 getReturnType FuncRef{ refering = p } s =
   maybe (Type . CType $ Void) getReturnType' . returnType $ get p s
 getReturnType VarRef{ types = (hd:_) } s = getReturnType hd s
+getReturnType ModuleVarRef{ identifier = i, refering = r } s =
+  let t = getVariableReference i r s
+  in getReturnType t s
 getReturnType ClassTypeRef{ refering = p } _ = ClassRef{ refering = p }
 getReturnType _ _ = error "cannot get return type of non callable objects"
 
@@ -250,6 +253,12 @@ getAttribute s ClassTypeRef{ refering = p } attr =
   let err = error ("attribute " ++ attr ++ " was not found")
       getType [] =
         error ("attribute " ++ attr ++ " referenced before assignement")
+      getType (hd:_) = hd
+  in maybe err getType . Map.lookup attr . variables $ get p s
+getAttribute s ModuleRef{ refering = p } attr =
+  let err = error ("variable " ++ attr ++ " was not found")
+      getType [] =
+        error ("variable " ++ attr ++ " referenced before assignement")
       getType (hd:_) = hd
   in maybe err getType . Map.lookup attr . variables $ get p s
 getAttribute s ClassRef{ refering = p } attr =

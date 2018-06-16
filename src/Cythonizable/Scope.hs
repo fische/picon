@@ -60,6 +60,10 @@ getCythonType' _ ClassTypeRef{} =
   error "class types are not supported"
 getCythonType' _ FuncRef{} =
   error "function pointers are not yet supported"
+getCythonType' _ ModuleRef{} =
+  error "module pointers are not yet supported"
+getCythonType' _ ModuleVarRef{} =
+  error "variable pointers to other modules are not yet supported"
 
 getCythonType :: Scope -> [Type] -> CythonType
 getCythonType s t =
@@ -83,6 +87,8 @@ getLocalVariableType global ident s =
 
 getLocalVariables' :: Scope -> String -> [Type] -> Map.Map String CythonType ->
   Map.Map String CythonType
+getLocalVariables' _ _ [ModuleVarRef{}] acc = acc
+getLocalVariables' _ _ [ModuleRef{}] acc = acc
 getLocalVariables' _ _ [FuncRef{}] acc = acc
 getLocalVariables' _ _ [ClassTypeRef{}] acc = acc
 getLocalVariables' global k v acc = Map.insert k (getCythonType global v) acc

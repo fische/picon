@@ -15,6 +15,8 @@ import Language.Python.Common.SrcLocation (SrcSpan(..))
 
 import Cythonizable.Context
 
+-- TODO Cythonize "import" to "cimport"
+
 class Cythonizable p c where
   cythonize :: p -> State Context c
 
