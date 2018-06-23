@@ -16,11 +16,11 @@ import qualified Language.Python.Common.ParseError as ParseError
 import Language.Python.Common.AST
 import Language.Python.Common.Token
 import Language.Python.Common.SrcLocation (SrcSpan(..))
-import Language.Python.Common.Pretty (prettyText)
 import Language.Python.Common.PrettyParseError ()
 
 import Language.Cython.AST as AST
-import Language.Cython.PrettyAST ()
+import qualified Language.Cython.PrettyASTImplementation as PrettyASTImplementation
+import qualified Language.Cython.PrettyASTDefinition as PrettyASTDefinition
 
 import Analyzable
 import Cythonizable
@@ -75,9 +75,12 @@ cythonize (o, f) = do
     newContext (takeDirectory absolutePath) (parser o)
   analysis <- analyze m newCtx >>= unstashAll
   let global = scope analysis
-      write (k, v) = let p = replaceExtension (maybe k (replaceDirectory k) $
-                              targetDir o) "pyx"
-                     in writeFile p $ prettyText v
+      write (k, v) = do
+                      let target = maybe k (replaceDirectory k) $ targetDir o
+                          imp = replaceExtension target "pyx"
+                          def = replaceExtension target "pxd"
+                      writeFile def $ PrettyASTDefinition.pretty v
+                      writeFile imp $ PrettyASTImplementation.pretty v
   mapM_ write . Map.assocs $ Map.mapWithKey (cythonize' global) $ scopes global
 
 main :: IO ()
