@@ -43,7 +43,8 @@ instance PrettyDefinition (Statement annot) where
     perhaps (fun_result_annotation stmt) (text "->") <+>
     prettyDefinition (fun_result_annotation stmt)
   prettyDefinition stmt@(Class {}) =
-    text "cdef class" <+> prettyDefinition (class_name stmt) <> prettyOptionalList (class_args stmt)
+    text "cdef class" <+> prettyDefinition (class_name stmt) <> prettyOptionalList (class_args stmt) <>
+    colon $+$ indent (prettySuite (class_body stmt))
   prettyDefinition (Decorated { decorated_decorators = decs, decorated_def = stmt}) =
     vcat (map prettyDefinition decs) $+$ prettyDefinition stmt
   prettyDefinition (CDefSuite vars _) = text "cdef:" $+$ indent (Map.foldrWithKey
