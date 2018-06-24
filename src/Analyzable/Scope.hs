@@ -267,6 +267,8 @@ getAttribute s ClassRef{ refering = p } attr =
         error ("attribute " ++ attr ++ " referenced before assignement")
       getType (hd:_) = hd
   in maybe err getType . Map.lookup attr . variables $ get p s
+getAttribute s ModuleVarRef{ identifier = i, refering = p } attr =
+  getAttribute s (getVariableReference i p s) attr
 getAttribute _ _ _ =
   error "this expression has no attribute"
 
