@@ -62,8 +62,22 @@ getCythonType' _ FuncRef{} =
   error "function pointers are not yet supported"
 getCythonType' _ ModuleRef{} =
   error "module pointers are not yet supported"
-getCythonType' _ ModuleVarRef{} =
-  error "variable pointers to other modules are not yet supported"
+getCythonType' global ref@ModuleVarRef{ identifier = i, refering = p } = do
+  set <- State.get
+  if Set.member ref set
+    then
+      return Nothing
+    else do
+      put $ Set.insert ref set
+      let s = Scope.get p global
+          err = error ("can not find module variable reference " ++ i)
+      ct <- mapM (getCythonType' global) . Map.findWithDefault err i $ variables s
+      let l = catMaybes ct
+      return $ bool
+        (Just $ mergeTypes l)
+        Nothing
+        (null l)
+
 
 getCythonType :: Scope -> [Type] -> CythonType
 getCythonType s t =
