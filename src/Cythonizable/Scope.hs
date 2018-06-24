@@ -101,7 +101,9 @@ getLocalVariableType global ident s =
 
 getLocalVariables' :: Scope -> String -> [Type] -> Map.Map String CythonType ->
   Map.Map String CythonType
-getLocalVariables' _ _ [ModuleVarRef{}] acc = acc
+getLocalVariables' global k v@[ModuleVarRef{ identifier = i }] acc
+  | i == k = acc
+  | otherwise = Map.insert k (getCythonType global v) acc
 getLocalVariables' _ _ [ModuleRef{}] acc = acc
 getLocalVariables' _ _ [FuncRef{}] acc = acc
 getLocalVariables' _ _ [ClassTypeRef{}] acc = acc
