@@ -175,8 +175,8 @@ returnVariable' _ _ = error "cannot return anywhere except in a function"
 returnVariable :: Type -> Path -> Scope -> Scope
 returnVariable t = update (returnVariable' t)
 
-addParameterType :: Argument -> Type -> Scope -> Scope
-addParameterType (Keyword ident) t s =
+addParameterType :: Int -> Argument -> Type -> Scope -> Scope
+addParameterType _ (Keyword ident) t s =
   let err = error ("cannot find variable " ++ ident)
       addType Nothing = Just t
       addType (Just o) = Just (Either(o, t))
@@ -184,16 +184,20 @@ addParameterType (Keyword ident) t s =
       parameterType =
         Map.alter (maybe err (Just . addType)) ident (parameterType s)
     }
-addParameterType (Position idx) t s =
+addParameterType indent (Position idx) t s =
   let l = parameterPosition s
-  in addParameterType (Keyword (l !! reverseIndex l idx)) t s
+  in addParameterType indent (Keyword (l !! reverseIndex l (idx + indent))) t s
 
 -- TODO Handle call to class constructor
 -- | call resolves variable references in the function scope.
 call :: Type -> Map.Map Argument Type -> Scope -> Scope
 call FuncRef{ refering = p } args s =
-  resolveReferences p $
-    update (\fun -> Map.foldrWithKey addParameterType fun args) p s
+  let indent =
+        case Scope.get (fst $ split p) s of
+          Class{} -> 1
+          _ -> 0
+  in resolveReferences p $
+    update (\fun -> Map.foldrWithKey (addParameterType indent) fun args) p s
 call (Either(t1, t2)) args s = call t2 args $ call t1 args s
 call VarRef{ types = (hd:_) } args ctx = call hd args ctx
 call _ _ _ = error "cannot call non-callable objects"
@@ -223,10 +227,13 @@ addParameter' param t funcPath upper =
     let addType Nothing = Just t
         addType (Just _) = error "parameter has already been added"
         updateParams ident = Map.alter addType ident $ parameterType func
-        ref ident =
-          case upper of
-            Class{path = p} -> [ClassRef{refering = p}]
-            _ -> [ParamRef{identifier = ident, refering = path func}]
+        ref ident
+          | l > 0 = [ParamRef{identifier = ident, refering = path func}]
+          | otherwise =
+              case upper of
+                Class{path = p} -> [ClassRef{refering = p}]
+                _ -> [ParamRef{identifier = ident, refering = path func}]
+          where l = length $ parameterPosition func
     in case param of
         (Positional ident) -> func {
           variables = Map.insert ident (ref ident) $ variables func,
